@@ -79,10 +79,10 @@ export pickUpy="$tmppath/pickingUxxU.xyh.py"
 export statpy_bamTag="$tmppath/statCB_PET.py"
 export buildCBpy="$tmppath/generateCBlist_for_cpuRead.v2.py"
 export mergeTable="$tmppath/mergeCBstats.1genome.arg.R"
-export bamtofrag="$tmppath/simply_bam2frags_singleEnd.xyh.py"
+export bamtofrag="$tmppath/bam2fragment.py"
 export sortfrag="$tmppath/sort_frags.R"
 export sumsh="$tmppath/extract_summary_cpu10x_1genome.sh"
-export filtersmallsize="$tmppath/filterinsertsizeless1000.xyh.py"
+export filtersmallsize="$tmppath/classPET.py"
 export Sbam2fragment="$tmppath/singletonBam2fragment.xyh.py"
 export CountBarcodePET="$tmppath/CountBarcodePET.py"
 
@@ -308,7 +308,7 @@ date
 echo "ARC 10x mapping for $RUN" 
 echo "Reference genome: $ARCref" 
 
-$arc10x --reference $ARCref --id 10xARC --libraries=$libcsv --localcores=$NTHREAD10x --jobmode=local # xyh
+$arc10x --reference $ARCref --id 10xARC --libraries=$libcsv --localcores=$NTHREAD10x --localmem=$GB --jobmode=local # xyh
 # $arc10x --reference $ARCref --id 10xARC --libraries=$libcsv --localcores=$NTHREAD10x --jobmode=slurm # xyh
 # $arc10x --reference $ARCref --id 10xARC --libraries=$libcsv --localcores=$NTHREAD10x --jobmode=slurm --maxjobs 99 # xyh
 
@@ -691,22 +691,23 @@ if [ '$LABEL' == '$pairlabel' ]; then
 
     echo "Continue to sort & dedup ..."
     date
-    grep -v noCB ${RUN}.${pairlabel}.UU.F2048.CB.sam | $samcmd sort -@ $cbNthread -o ${RUN}.${pairlabel}.UU.F2048.CB.csorted.bam
+    grep -v noCB ${RUN}.${pairlabel}.UU.F2048.CB.sam | $samcmd view -u - | $bedcmd pairtobed -abam stdin -b "$blacklist" -type neither | $samcmd sort -@ $cbNthread -o ${RUN}.${pairlabel}.UU.F2048.CB.csorted.bam
     $dedup -M ${RUN}.${pairlabel}.UU.F2048.CB.nr.MarkDuplicates.txt -O ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam  -I ${RUN}.${pairlabel}.UU.F2048.CB.csorted.bam
 
     echo "Query sort then count nrPET CB in ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam"
     date
     $samcmd sort -n -@ $cbNthread -o ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam  #nsorted for cpu cluster then ChiaSig
+    $python "$filtersmallsize" ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted
     $samcmd view -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam | $python "$statpy_bamTag"  > ${RUN}.${pairlabel}.UU.F2048.CB.nrPET.tsv
 
     echo "Generating interaction ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe"
     date
     # $samcmd sort -n -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam | $samcmd view -h | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe  # xyh
-    $samcmd view -h ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe
+    $samcmd view -h ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.pet.bam | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe
 
     echo "Get CB in the $UxxUbam"
     date
-    $samcmd view -h $picksam | $python "$addCBpy" $pkl | grep -v noCB  | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
+    $samcmd view -h $picksam | $python "$addCBpy" $pkl | grep -v noCB | $samcmd view -u - | $bedcmd intersect -v -nonamecheck -a stdin -b "$blacklist" | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
     $dedup -M ${RUN}.${pairlabel}.UxxU.F2048.CB.nr.MarkDuplicates.txt -O ${RUN}.${pairlabel}.UxxU.F2048.CB.nr.bam  -I ${RUN}.${pairlabel}.UxxU.F2048.CB.csorted.bam
 
     echo "Get CBstats  $UxxUbam"
@@ -723,7 +724,7 @@ fi
 if [ '$LABEL' == '$singlabel' ]; then 
     echo "Get CB in the $UxxUbam"
     date
-    $samcmd view -h $picksam | $python "$addCBpy" $pkl | grep -v noCB  | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
+    $samcmd view -h $picksam | $python "$addCBpy" $pkl | grep -v noCB | $samcmd view -u - | $bedcmd intersect -v -nonamecheck -a stdin -b "$blacklist" | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
     echo "Dedup starts "
     date
     $dedup -M ${RUN}.${singlabel}.UxxU.F2048.CB.nr.MarkDuplicates.txt -O ${RUN}.${singlabel}.UxxU.F2048.CB.nr.bam  -I ${RUN}.${singlabel}.UxxU.F2048.CB.csorted.bam
@@ -744,7 +745,7 @@ if [ '$LABEL' == '$nonelabel' ]; then
 
     echo "Continue to sort & dedup ..."
     date
-    grep -v noCB ${RUN}.${nonelabel}.UU.F2048.CB.sam | $samcmd sort -@ $cbNthread -o ${RUN}.${nonelabel}.UU.F2048.CB.csorted.bam
+    grep -v noCB ${RUN}.${nonelabel}.UU.F2048.CB.sam | $samcmd view -u - | $bedcmd pairtobed -abam stdin -b "$blacklist" -type neither | $samcmd sort -@ $cbNthread -o ${RUN}.${nonelabel}.UU.F2048.CB.csorted.bam
     $dedup -M ${RUN}.${nonelabel}.UU.F2048.CB.nr.MarkDuplicates.txt -O ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam  -I ${RUN}.${nonelabel}.UU.F2048.CB.csorted.bam
     $samcmd view -F 2048 -F 4 ${RUN}.${LABEL}.UU.F2048.CB.nr.bam | $python "$statpy_noTag" $pkl  > ${RUN}.${LABEL}.UU.F2048.CB.nr.tsv
     $samcmd view -F 2048 -F 4 ${RUN}.${LABEL}.UU.F2048.CB.nr.bam | $python "$statpy_bamTag" > ${RUN}.${nonelabel}.UU.F2048.CB.nr.PET.tsv
@@ -762,7 +763,7 @@ if [ '$LABEL' == '$nonelabel' ]; then
 
     echo "Get CB in the $UxxUbam"
     date
-    $samcmd view -h $picksam | $python "$addCBpy" $pkl | grep -v noCB  | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
+    $samcmd view -h $picksam | $python "$addCBpy" $pkl | grep -v noCB | $samcmd view -u - | $bedcmd intersect -v -nonamecheck -a stdin -b "$blacklist" | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
     $dedup -M ${RUN}.${nonelabel}.UxxU.F2048.CB.nr.MarkDuplicates.txt -O ${RUN}.${nonelabel}.UxxU.F2048.CB.nr.bam  -I ${RUN}.${nonelabel}.UxxU.F2048.CB.csorted.bam
 
     echo "Get CBstats  $UxxUbam"
@@ -949,19 +950,11 @@ cd "${cpudir}"
 date 
 SECONDS=0
 
-echo "Get one tag from ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam" 
-date 
-# $samcmd view -@ $NTHREAD -hb -f 64 -o ${RUN}.${nonelabel}.UU.F2048.f64.CB.nr.bam ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam # xyh 
-# ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam
-# ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam
-$samcmd view -H ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam | grep '^@SQ' | cut -f 2-3 |grep -v '_chr' | sed s?SN:?? | sed s?LN:??   > ${genome}.chrlength.txt
-# $python "$Sbam2fragment" ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam | $samcmd sort -@ $NTHREAD -o ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam.tmp -
-$samcmd sort -@ $NTHREAD -o ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam.tmp ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam
-$samcmd view -@ $NTHREAD -Sb -f 64 ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam | $samcmd sort -@ $NTHREAD -o ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam.tmp -
+$samcmd view -H ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam | grep '^@SQ' | cut -f 2-3 | grep -v '_chr' | sed s?SN:?? | sed s?LN:?? > ${genome}.chrlength.txt
 
 echo  STARTED $jobname 
-# $samcmd merge -@ $NTHREAD -o ${RUN}.tmp.bam ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam ${RUN}.${pairlabel}.UxxU.F2048.CB.nr.bam ${RUN}.${singlabel}.UxxU.F2048.CB.nr.bam ${RUN}.${nonelabel}.UxxU.F2048.CB.nr.bam ${RUN}.${nonelabel}.UU.F2048.f64.CB.nr.bam # xyh
-$samcmd merge -@ $NTHREAD -o ${RUN}.tmp.bam ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam ${RUN}.${pairlabel}.UxxU.F2048.CB.nr.bam ${RUN}.${singlabel}.UxxU.F2048.CB.nr.bam ${RUN}.${nonelabel}.UxxU.F2048.CB.nr.bam ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam.tmp ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam.tmp
+$samcmd merge -@ $NTHREAD -o ${RUN}.tmp.bam ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam ${RUN}.${pairlabel}.UxxU.F2048.CB.nr.bam ${RUN}.${singlabel}.UxxU.F2048.CB.nr.bam ${RUN}.${nonelabel}.UxxU.F2048.CB.nr.bam ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam
+
 echo  "Merging nr.bam files  done in \$SECONDS secs."  
 date 
 
@@ -978,6 +971,7 @@ $scom bedSort ${finalSuf}.bedgraph  ${finalSuf}.sorted.bedgraph
 
 # $samcmd view -H ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam | grep '^@SQ' | cut -f 2-3 |grep -v '_chr' | sed s?SN:?? | sed s?LN:??   > ${genome}.chrlength.txt # xyh
 $scom bedGraphToBigWig  ${finalSuf}.sorted.bedgraph  ${genome}.chrlength.txt ${finalSuf}.bw
+$samcmd index -@ $NTHREAD ${finalSuf}.bam
 $bamCoverage -b ${finalSuf}.bam -o ${RUN}.ATAC.RPKM.bedgraph --binSize 5 --outFileFormat bedgraph --normalizeUsing RPKM -p $NTHREAD
 echo -e  "Done converting to bigwig n" 
 date 
@@ -986,12 +980,8 @@ date
 SECONDS=0
 echo "Starting to get fragments.tsv from ${finalSuf}.bam" 
 date  
-# perl "$bamtofrag" --read_file ${finalSuf}.bam --output_file ${tsvfile} --samtools_path $toolsbin # xyh
-$python "$bamtofrag" ${finalSuf}.bam ${tsvfile}
-# perl "$bamtofrag" --read_file ${finalSuf}.bam --output_file ${tsvfile}.tmptmp --samtools_path $toolsbin # xyh
-# mv ${tsvfile}.tmptmp.len ${tsvfile}.len # xyh
-# awk -v OFS="\t" '{if(\$2<0){\$2=0}print \$0}' ${tsvfile}.tmptmp > ${tsvfile} # xyh
-# rm ${tsvfile}.tmptmp # xyh
+# Author P365: paired short inward-facing records use -p; other records use -s.
+$python "$bamtofrag" -p ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.singleton.bam,${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam -s ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.pet.bam,${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.other.bam,${RUN}.${pairlabel}.UxxU.F2048.CB.nr.bam,${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam,${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.other.bam,${RUN}.${nonelabel}.UxxU.F2048.CB.nr.bam,${RUN}.${singlabel}.UxxU.F2048.CB.nr.bam -o ${tsvfile}
 echo  "done in \$SECONDS secs."  
 date
 
@@ -1071,7 +1061,7 @@ date
 
 #Summary including peaks
 cd ${cpudir} 
-"$sumsh" $RUN $genome
+bash "$sumsh" $RUN $genome
 
 echo "Organize files under $PWD"
 #Clearing files
@@ -1170,7 +1160,7 @@ function reanalyzeATAC {
 set -eo pipefail
 cd "$wdir"
 awk '\$7+0 > $peak_signal_min' "$cpudir/${RUN}_peaks.narrowPeak" | grep -v -i chrM | cut -f 1-3 > "$cpudir/${RUN}.peak"
-$atac10x --id 10xATAC --peaks "$cpudir/${RUN}.peak" --fragments "$cpudir/${RUN}.fragments.tsv.gz" --reference "$ATACref" --localcores ${NTHREAD10x}
+$atac10x --id 10xATAC --peaks "$cpudir/${RUN}.peak" --fragments "$cpudir/${RUN}.fragments.tsv.gz" --reference "$ATACref" --localcores ${NTHREAD10x} --localmem ${GB}
 ENDHERE
     jidatac=$(submitjob "$pbs" "$@")
     export jidatac

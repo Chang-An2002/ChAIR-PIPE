@@ -103,7 +103,7 @@ Perl
 
 Slurm
 ```
-Some of the software we use is the singularity version. The following four software can be downloaded from Baidu.com (https://pan.baidu.com/s/1KKC0DJ43wuuCdPwr09dgCg?pwd=bj2p   Password: bj2p) or scp public@43.143.40.13:~/*sif . (Password: public_123456)
+Some tools can be run using Singularity images. Set their command prefixes in the configuration.
 ```
 cellranger_6.0.0.sif
 cpu0.0.1a-r2.sumner.sif
@@ -138,6 +138,8 @@ The entry point submits ARC barcode assignment, independent RNA counting, CPU DN
 | PET statistics | `bulkChiatac/<sample>.hq.CB.nr.bedpe.stat` |
 | Final Seurat object and metadata | `CallCell/data/<sample>.final.rds` and `<sample>.metadata.txt` |
 | Recorded analysis input paths | `CallCell/data/input_paths.tsv` |
+
+Fragment export uses the author's `classPET.py` and `bam2fragment.py`: short inward-facing pairs use the paired branch; PET and other alignments use the single-end branch.
 
 `codes/callcell_xingyu.R` applies `PET_intragt1000 > 50` and intersects RNA, ATAC and PET barcodes. It retains the author's RNA doublet filtering, RNA/ATAC clustering and WNN workflow through `codes/function.R`. QC thresholds and reduction settings are configured in the environment file.
 
