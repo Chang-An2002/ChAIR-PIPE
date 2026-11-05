@@ -12,12 +12,35 @@ checkdir <- function(dirpath) {
   }
 }
 
+# Use the same selected, positive-variance scaled genes in Seurat v4 and v5.
+# This is the matrix RunPCA route already validated in the author's revision run.
+runSelectedPCA <- function(data, assay = "RNA", features = VariableFeatures(data[[assay]]), npcs = 50, reduction.name = "pca", reduction.key = "PC_") {
+  scaled <- if (inherits(data[[assay]], "Assay5")) {
+    LayerData(data, assay = assay, layer = "scale.data")
+  } else {
+    GetAssayData(data, assay = assay, slot = "scale.data")
+  }
+  features <- intersect(features, rownames(scaled))
+  mat <- scaled[features, , drop = FALSE]
+  variances <- matrixStats::rowVars(as.matrix(mat))
+  features <- features[is.finite(variances) & variances > 0]
+  npcs <- min(npcs, length(features) - 1L, ncol(data) - 1L)
+  if (npcs < 2L) stop("Too few variable genes or cells for PCA")
+  reduction <- Seurat::RunPCA(mat[features, , drop = FALSE], assay = assay, npcs = npcs, reduction.key = reduction.key, seed.use = 42, rev.pca = FALSE, weight.by.var = TRUE, approx = TRUE)
+  stopifnot(identical(rownames(Loadings(reduction)), features))
+  data[[reduction.name]] <- reduction
+  command.name <- paste0("RunPCA.", assay)
+  data[[command.name]] <- new("SeuratCommand", name = command.name, time.stamp = Sys.time(), assay.used = assay, call.string = "Seurat::RunPCA(selected_scaled_variable_gene_matrix)", params = list(assay = assay, features = features, npcs = npcs, rev.pca = FALSE, weight.by.var = TRUE, approx = TRUE, seed.use = 42, reduction.name = reduction.name, reduction.key = reduction.key))
+  message("PCA used ", length(features), " selected genes")
+  data
+}
+
 runRNA <- function(data, findcluster = T) {
   DefaultAssay(data) <- "RNA"
   data <- NormalizeData(object = data)
   data <- FindVariableFeatures(object = data, nfeatures = 3000)
   data <- ScaleData(object = data, features = rownames(data))
-  data <- RunPCA(data, assay = "RNA", features = VariableFeatures(data), reduction.name = "rnapca", reduction.key = "rnaPCA_")
+  data <- runSelectedPCA(data, assay = "RNA", features = VariableFeatures(data), reduction.name = "rnapca", reduction.key = "rnaPCA_")
   data <- RunUMAP(data, reduction = "rnapca", dims = seq_len(rna.dims), reduction.name = "rnaumap", reduction.key = "rnaUMAP_")
   data <- RunTSNE(data, reduction = "rnapca", dims = seq_len(rna.dims), reduction.name = "rnatsne", reduction.key = "rnaTSNE_", check_duplicates = F)
   if (findcluster == T) {
@@ -141,6 +164,8 @@ baseals <- function(data, type, findcluster = T, integrate = T) {
 }
 
 finddoublet <- function(data, DoubletRate = 0.054) {
+  # DoubletFinder reuses this ScaleData command when building artificial cells.
+  data <- ScaleData(data, assay = "RNA", features = VariableFeatures(data[["RNA"]]))
   data@reductions$pca <- data@reductions$rnapca
   
   # find the best pk value
@@ -357,7 +382,7 @@ clusterdeeper <- function(data, idents, outpath = ".", resultname, marker = NULL
     tmpdata <- NormalizeData(object = tmpdata)
     tmpdata <- FindVariableFeatures(object = tmpdata, nfeatures = 3000)
     tmpdata <- ScaleData(object = tmpdata, features = rownames(tmpdata))
-    tmpdata <- RunPCA(tmpdata, npcs = npcs, features = VariableFeatures(tmpdata))
+    tmpdata <- runSelectedPCA(tmpdata, npcs = npcs, features = VariableFeatures(tmpdata))
     tmpdata <- FindNeighbors(object = tmpdata, dims = 1:dims)
     tmpdata <- FindClusters(tmpdata, resolution = 0.8)
     
