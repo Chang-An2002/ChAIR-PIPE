@@ -1,187 +1,136 @@
-#!/usr/bin/bash
-#from FASTQ files, run CPU 10x multiome 
-#add CB tags to get stats & fragments.tsv
-#add ZB tags (numeric in CB replaced by letter) for MarkDuplicates
-#map to hybrid genome, then split after cpu pairing
+#!/usr/bin/env bash
+set -eo pipefail
 
-#Input arg:  fqlist 
-#////////////////////////////////////////////////////////////////////////////////////////
-#Format of fqlist is one library per row consists of  2 columns 
-#Don't include the sampleID_laneID (e.g. strip out _S3_L002_*)
-#PREFIX_FASTQ_R1_PATH_scChiatacDNA PREFIX_FASTQ_R1_PATH_scRNA
-#/projects/ruan-lab/USERS/chaih/processing/fastq/20210510_21-gtct-017/20210510_21-gtct-017/SCG0004/SCG0004_GT21-09239_SI-NA-D1 /projects/wei-lab/USERS/chaih/fastq/20210520_21-gtct-020/SCG0008/SCG0008_GT21-10406_GTAACATGCG
-#////////////////////////////////////////////////////////////////////////////////////////
-#.............................. CONFIG HERE ............................................
-addLinkerSeq='-A ACGTGATATTTCACGACTCT' #add linker sequence for cpu stag '-A ACGTGATATTTCACGACTCT' # Important: if using default linker just leave it empty .ie. '' !!!
-#addLinkerSeq='' #This is for default linker used in bridge linker ChIA-PET
+# One DNA FASTQ prefix and one RNA FASTQ prefix per row.
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "Usage: bash $0 FASTQ_PREFIX_TABLE [CONFIG_FILE]" >&2
+    exit 1
+fi
+fqlist=$(realpath "$1")
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+config_file=${2:-${CHAIR_CONFIG:-}}
+if [[ -n "$config_file" ]]; then
+    config_file=$(realpath "$config_file")
+    source "$config_file"
+fi
 
-export genome=mm10
-export ARCref=~/Tools/cellranger-arc-2.0.2/genome/refdata-cellranger-arc-mm10-2020-A-2.0.0 #genome ref
-export GEXref=~/Tools/cellranger-7.1.0/genome/refdata-gex-mm10-2020-A #genome ref
-fasta="~/Haoxi20230315/20230205_pipeline/refs/mm10/bwa/mm10.fa"
+: "${ARCref:?Set ARCref in the configuration}"
+: "${GEXref:?Set GEXref in the configuration}"
+: "${ATACref:?Set ATACref in the configuration}"
+: "${fasta:?Set fasta in the configuration}"
+: "${blacklist:?Set blacklist in the configuration}"
+: "${scom:?Set scom to the CPU/UCSC/MACS2 command prefix}"
+: "${dedup:?Set dedup to the GATK MarkDuplicates command}"
+: "${juicertool:?Set juicertool to the Juicer tools command}"
 
-export gmac='mm' #MACS2: hs=human, mm=mouse, dm=fruitfly
-export shiftsize=-75 #MACS2
-export macsq=0.001 #MACS2
-export peakext=150 #MACS2
+export genome=${genome:-mm10}
+export gmac=${gmac:-mm}
+export shiftsize=${shiftsize:--75}
+export macsq=${macsq:-0.001}
+export peakext=${peakext:-150}
+export peak_signal_min=${peak_signal_min:-1.5}
+export addLinkerSeq=${addLinkerSeq-'-A ACGTGATATTTCACGACTCT'}
+export minMapScore=${minMapScore:-30}
+export mapq=${mapq:-20}
+export selfbp=${selfbp:-1}
+export bulkSelfbp=${bulkSelfbp:-8000}
+export minPETsignif=${minPETsignif:-3}
+export chemistry=${chemistry:-ARC-v1}
 
-export blacklist=~/Haoxi20230315/20230205_pipeline/pipelineTools/mm10.blacklist.bed
-export minMapScore=30 #CPU mappping output filter
-export mapq=20 # xyh
-export selfbp=1 #to report everythin in the tsv
-export bulkSelfbp=8000 #CPU PET interactions min distance
-export minPETsignif=3 #ChiaSig
+export NTHREAD=${NTHREAD:-48}
+export NTHREAD10x=${NTHREAD10x:-$NTHREAD}
+export GB=${GB:-200}
+export highGB=${highGB:-320}
+export cbdictGB=${cbdictGB:-400}
+export cbNthread=${cbNthread:-24}
+export hrs=${hrs:-21}
+export QUEUE=${QUEUE:-cpu}
+export smallQUEUE=${smallQUEUE:-$QUEUE}
+export highpart=${highpart:-$QUEUE}
+export LINKER_GB=${LINKER_GB:-15}
+export MAPPING_GB=${MAPPING_GB:-40}
+export MERGE_GB=${MERGE_GB:-36}
+export TABLE_GB=${TABLE_GB:-8}
+export SUMMARY_GB=${SUMMARY_GB:-2}
+export DOWNSTREAM_GB=${DOWNSTREAM_GB:-$highGB}
 
-#computing params
-export NTHREAD=48    #number of cpu in general
-export NTHREAD10x=48  #number of cpu for GEX
-export GB=200 #regular jobs memory
-export highGB=320
-export cbdictGB=400 #memory to build dictionary; this default is good for 400 million reads
-export cbNthread=24 #number of cpus for CB-related job
-export hrs=21  #additional hours, put < 24
-export QUEUE=ruan_cpu
-export smallQUEUE=ruan_cpu
-export highpart=ruan_cpu
-# export QUEUE=cpu
-#.............................. CONFIG ENDS ............................................
-#define names
-export pairlabel='singlelinker.paired'  #PET or 2tag file names
-export singlabel='singlelinker.single'  #1tag file names
-export nonelabel='none'                 #0tag file names
-export dumpfolder=dump_intermediate     #where intermediate files to be dumped
+export pairlabel=singlelinker.paired
+export singlabel=singlelinker.single
+export nonelabel=none
+export dumpfolder=${dumpfolder:-dump_intermediate}
+export tmppath="$SCRIPT_DIR/codes"
+export python=${python:-python3}
+export bedcmd=${bedcmd:-bedtools}
+export samcmd=${samcmd:-samtools}
+export Rcmd=${Rcmd:-Rscript}
+export bgzip=${bgzip:-bgzip}
+export tabix=${tabix:-tabix}
+export pigz=${pigz:-'pigz -f'}
+export bamCoverage=${bamCoverage:-bamCoverage}
+export arc10x=${arc10x:-'cellranger-arc count'}
+export gex10x=${gex10x:-'cellranger count'}
+export atac10x=${atac10x:-'cellranger-atac reanalyze'}
+export cpuprog=${cpuprog:-"$scom cpu"}
 
-#/////////////////// modify above values if needed //////////////////////////////////////
-#////////////////////////////////////////////////////////////////////////////////////////
+export statpy_noTag="$tmppath/statBarcode_givenCBlist.py"
+export addCBpy="$tmppath/addCBZB_givenCBlist.py"
+export injectCBreadID="$tmppath/useCBtag_injectReadID.pl"
+export pickUpy="$tmppath/pickingUxxU.xyh.py"
+export statpy_bamTag="$tmppath/statCB_PET.py"
+export buildCBpy="$tmppath/generateCBlist_for_cpuRead.v2.py"
+export mergeTable="$tmppath/mergeCBstats.1genome.arg.R"
+export bamtofrag="$tmppath/simply_bam2frags_singleEnd.xyh.py"
+export sortfrag="$tmppath/sort_frags.R"
+export sumsh="$tmppath/extract_summary_cpu10x_1genome.sh"
+export filtersmallsize="$tmppath/filterinsertsizeless1000.xyh.py"
+export Sbam2fragment="$tmppath/singletonBam2fragment.xyh.py"
+export CountBarcodePET="$tmppath/CountBarcodePET.py"
 
-maindir=$PWD
+export CHAIR_MIN_RNA=${CHAIR_MIN_RNA:-100}
+export CHAIR_MIN_ATAC=${CHAIR_MIN_ATAC:-100}
+export CHAIR_MIN_PET=${CHAIR_MIN_PET:-50}
+export CHAIR_MAX_MT=${CHAIR_MAX_MT:-20}
+export CHAIR_MAX_RIBO=${CHAIR_MAX_RIBO:-50}
+export CHAIR_DOUBLET_RATE=${CHAIR_DOUBLET_RATE:-0.054}
+export CHAIR_SEED=${CHAIR_SEED:-1234}
+export CHAIR_RNA_DIMS=${CHAIR_RNA_DIMS:-30}
+export CHAIR_ATAC_DIMS=${CHAIR_ATAC_DIMS:-30}
+export CHAIR_RNA_RESOLUTION=${CHAIR_RNA_RESOLUTION:-0.8}
+export CHAIR_ATAC_RESOLUTION=${CHAIR_ATAC_RESOLUTION:-0.8}
+export CHAIR_WNN_RESOLUTION=${CHAIR_WNN_RESOLUTION:-0.5}
 
-#tools and refs
-export sifpath=~/Haoxi20230315/20230205_pipeline/singularity
-export scom="singularity run $sifpath/cpu0.0.1a-r2.sumner.sif"
-export pigz="$scom pigz -f " # xyh
-export dedup="singularity run ${sifpath}/GATK_latest.sif gatk MarkDuplicates --BARCODE_TAG=ZB --REMOVE_DUPLICATES=true --ADD_PG_TAG_TO_READS=false" # xyh
-# export dedup="java -jar ~/Tools/gatk-4.4.0.0/gatk-package-4.4.0.0-local.jar MarkDuplicates --BARCODE_TAG ZB --REMOVE_DUPLICATES true --ADD_PG_TAG_TO_READS false" # xyh
-
-module load R-3.6.1
-export Rbin=/share/apps/software/R/3.6.1/bin
-export toolsbin=~/Tools/forscChIATACSeq
-export bedcmd=$toolsbin/bedtools
-export samcmd=$toolsbin/samtools
-export Rcmd=$Rbin/Rscript
-
-export tmppath=~/Haoxi20230315/20230205_pipeline/codes
-export statpy_noTag=${tmppath}/statBarcode_givenCBlist.py #input have to be no header sam format
-export addCBpy=${tmppath}/addCBZB_givenCBlist.py
-export injectCBreadID=${tmppath}/useCBtag_injectReadID.pl
-# export pickUpy=${tmppath}/pickingUxxU.py # xyh
-export pickUpy=${tmppath}/pickingUxxU.xyh.py # xyh
-export statpy_bamTag=${tmppath}/statCB_PET.py
-export buildCBpy=${tmppath}/generateCBlist_for_cpuRead.v2.py
-export mergeTable=${tmppath}/mergeCBstats.1genome.arg.R
-# export bamtofrag=${tmppath}/simply_bam2frags_singleEnd.pl #https://github.com/wbaopaul/scATAC-pro # xyh
-export bamtofrag=${tmppath}/simply_bam2frags_singleEnd.xyh.py
-export sortfrag=${tmppath}/sort_frags.R
-export sumsh=${tmppath}/extract_summary_cpu10x_1genome.sh
-export filtersmallsize=${tmppath}/filterinsertsizeless1000.xyh.py # xyh
-export Sbam2fragment=${tmppath}/singletonBam2fragment.xyh.py # xyh
-export juicertool="singularity run $sifpath/juicer_1.22.01.sif"
-
-export cpuprog="$scom cpu"
-export arc10x='cellranger-arc count'
-export gex10x="singularity run ${sifpath}/cellranger_6.0.0.sif count"
-
-
-#------------------------------------
-# Auxilary functions
-#------------------------------------
-die () {
- echo >&2 "$@"
- exit 1
-}
-[ $# -ge 1 ] || die "Please give 1 arg: fqlist file!"
-
+mkdir -p "${OUTPUT_DIR:-$PWD}"
+maindir=$(realpath "${OUTPUT_DIR:-$PWD}")
+die() { echo "$*" >&2; exit 1; }
 function odir {
 echo "odir cmd -- $1 "
 outputDir=$1
-if [ ! -d $outputDir ]; then
+if [ ! -d "$outputDir" ]; then
     echo "Create $outputDir"
-    mkdir $outputDir
+    mkdir -p "$outputDir"
 fi
 }
 
 function submitjob {
-local slurmfile=$1
-local jid=$2
-
-[[ ! -z "$jid" ]] && jid1=$(sbatch --dependency=afterany:$jid  $slurmfile)  || jid1=$(sbatch $slurmfile)
-echo $jid1 | awk '{print $NF}'
+    local slurmfile=$1
+    shift
+    local dependency="" id
+    for id in $*; do
+        case ":$dependency:" in
+            *":$id:"*) ;;
+            *) dependency="${dependency:+$dependency:}$id" ;;
+        esac
+    done
+    if [[ -n "$dependency" ]]; then
+        sbatch --parsable --dependency="afterok:$dependency" "$slurmfile"
+    else
+        sbatch --parsable "$slurmfile"
+    fi | cut -d';' -f1
 }
 
-
-function submitjob2ok {
-local slurmfile=$1
-local jid1=$2
-local jid2optional=$3
-
-if [ -z "$jid2optional" ]; then
-    jidnow=$(sbatch --dependency=afterany:$jid1  $slurmfile)
-else
-    jidnow=$(sbatch --dependency=afterany:$jid1:$jid2optional  $slurmfile)
-fi
-echo $jidnow | awk '{print $NF}'
-
-}
-
-function submitjobOptional {
-local slurmfile=$1
-local jid1=$2
-local jid2optional=$3
-
-if [ -z "$jid1" ]; then
-    jidnow=$(sbatch $slurmfile)
-elif [ -z "$jid2optional" ]; then
-    jidnow=$(sbatch --dependency=afterany:$jid1  $slurmfile)
-else
-    jidnow=$(sbatch --dependency=afterany:$jid1:$jid2optional  $slurmfile)
-fi
-echo $jidnow | awk '{print $NF}'
-
-}
-
-function submitjobOptional8 {
-local slurmfile=$1
-local jid1optional=$2
-local jid2optional=$3
-local jid3optional=$4
-local jid4optional=$5
-local jid5optional=$6
-local jid6optional=$7
-local jid7optional=$8
-local jid8optional=$9
-
-if [ -z "$jid1optional" ]; then
-    jidnow=$(sbatch $slurmfile)
-elif [ -z "$jid2optional" ]; then
-    jidnow=$(sbatch --dependency=afterany:$jid1optional  $slurmfile)
-elif [ -z "$jid3optional" ]; then
-    jidnow=$(sbatch --dependency=afterany:$jid1optional:$jid2optional  $slurmfile)
-elif [ -z "$jid4optional" ]; then
-    jidnow=$(sbatch --dependency=afterany:$jid1optional:$jid2optional:$jid3optional  $slurmfile)
-elif [ -z "$jid5optional" ]; then
-    jidnow=$(sbatch --dependency=afterany:$jid1optional:$jid2optional:$jid3optional:$jid4optional  $slurmfile)
-elif [ -z "$jid6optional" ]; then
-    jidnow=$(sbatch --dependency=afterany:$jid1optional:$jid2optional:$jid3optional:$jid4optional:$jid5optional  $slurmfile)
-elif [ -z "$jid7optional" ]; then
-    jidnow=$(sbatch --dependency=afterany:$jid1optional:$jid2optional:$jid3optional:$jid4optional:$jid5optional:$jid6optional  $slurmfile)
-elif [ -z "$jid8optional" ]; then
-    jidnow=$(sbatch --dependency=afterany:$jid1optional:$jid2optional:$jid3optional:$jid4optional:$jid5optional:$jid6optional:$jid7optional  $slurmfile)
-else
-    jidnow=$(sbatch --dependency=afterany:$jid1optional:$jid2optional:$jid3optional:$jid4optional:$jid5optional:$jid6optional:$jid7optional:$jid8optional  $slurmfile)
-fi
-echo $jidnow | awk '{print $NF}'
-
-}
+function submitjob2ok { submitjob "$@"; }
+function submitjobOptional { submitjob "$@"; }
+function submitjobOptional8 { submitjob "$@"; }
 
 export dedupIDs1='' #for dependent job that need multiple previous jobIDs
 export dedupIDs2='' #for dependent job that need multiple previous jobIDs
@@ -228,19 +177,20 @@ pbs=${jobname}.slurm
 
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n $NTHREAD  # number of threads
-#SBATCH --mem 15G # memory pool for all cores # XYH some Memory
+#SBATCH --mem ${LINKER_GB}G # memory pool for all cores # XYH some Memory
 #SBATCH --partition=${smallQUEUE}
 #SBATCH --job-name $jobname
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
+set -eo pipefail
 #cd \$SLURM_SUBMIT_DIR
 
-cd $cpudir
+cd "$cpudir"
 date
 
 
@@ -254,9 +204,9 @@ if [ "$nf" -gt  1 ]; then
    cat ${fqpref}_*L*_R3*.fastq.gz  > $fastq2
 else
     echo "Soft-linking $r1 file to $fastq1"
-    ln -s $r1 $fastq1
+    ln -s -f $r1 $fastq1
     echo "Soft-linking $r3 file to $fastq2"
-    ln -s $r3 $fastq2
+    ln -s -f $r3 $fastq2
 fi
 
 # perform linker detection and generation of different category of fastq files
@@ -290,6 +240,7 @@ jidLinker=$(submitjob $pbs)
 
 echo "Passing jobID $jidLinker of $jobname"
 echo "cpuLinker $jobname $jidLinker $pbs.log" >&2
+buildCBlist "$fqpref" "$jidarc:$jidLinker"
 cpuMapping $fqpref $pairlabel $jidLinker
 cpuMapping $fqpref $singlabel $jidLinker
 cpuMapping $fqpref $nonelabel $jidLinker
@@ -331,14 +282,14 @@ pbs=${jobname}.slurm
 
 export wdir=$maindir/$RUN
 libcsv=$wdir/$jobname.csv
-echo 'fastqs,sample,library_type' > $libcsv
-echo "${fqDir},${RUN},Chromatin Accessibility" >> $libcsv
-echo "${gexDir},${gexRUN},Gene Expression" >> $libcsv
+echo 'fastqs,sample,library_type' > "$libcsv"
+echo "${fqDir},${RUN},Chromatin Accessibility" >> "$libcsv"
+echo "${gexDir},${gexRUN},Gene Expression" >> "$libcsv"
 
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n ${NTHREAD10x}  # number of threads
@@ -348,8 +299,9 @@ cat << ENDHERE > $pbs
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
-cd $wdir
-export PATH=${toolsbin}:\$PATH
+set -eo pipefail
+cd "$wdir"
+# Software commands are supplied by the configuration.
 
 date
 
@@ -364,9 +316,11 @@ date
 
 ENDHERE
 
-export jidarc=$(submitjob $pbs)
+jidarc=$(submitjob $pbs)
+
+export jidarc
 echo "mapARC10x $jidarc $pbs.log" >&2
-buildCBlist $fqpref $jidarc
+# The linker stage schedules the CB dictionary after both inputs are ready.
 echo "."
 }
 
@@ -384,7 +338,7 @@ export wdir=$maindir/$RUN
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n 1  # number of threads
@@ -394,14 +348,15 @@ cat << ENDHERE > $pbs
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
-cd $wdir
-export PATH=${toolsbin}:\$PATH
+set -eo pipefail
+cd "$wdir"
+# Software commands are supplied by the configuration.
 
 date 
 
-echo "Running $buildCBpy " 
+echo "Running "$buildCBpy" " 
 
-python $buildCBpy $maindir/$RUN/10xARC/outs/atac_possorted_bam.bam $maindir/$RUN/bulkChiatac/${RUN}_R1.fastq.gz $RUN
+$python "$buildCBpy" $maindir/$RUN/10xARC/outs/atac_possorted_bam.bam $maindir/$RUN/bulkChiatac/${RUN}_R1.fastq.gz $RUN
 
 echo "CB dictionary built:" 
 /bin/ls -ltr ${RUN}*.pkl 
@@ -409,7 +364,9 @@ date
 
 ENDHERE
 
-export jidpkl=$(submitjob $pbs $prevJobid)
+jidpkl=$(submitjob $pbs $prevJobid)
+
+export jidpkl
 echo "buildCBlist $jidpkl $pbs.log" >&2
 echo "Recorded jobID $jidpkl of $jobname"
 echo ""
@@ -435,7 +392,7 @@ export wdir=$maindir/$RUN
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n $NTHREAD10x  # number of threads
@@ -445,17 +402,23 @@ cat << ENDHERE > $pbs
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
-cd $wdir
+set -eo pipefail
+cd "$wdir"
 
 date 
 
 echo "GEX 10x mapping for $RUN" 
 echo "Reference genome: $GEXref" 
-$gex10x --transcriptome $GEXref --id 10xGEX --sample ${gexRUN} --fastqs=$gexDir --localcores=$NTHREAD10x --localmem=$GB --include-introns --chemistry=ARC-v1
+$gex10x --transcriptome $GEXref --id 10xGEX --sample ${gexRUN} --fastqs=$gexDir --localcores=$NTHREAD10x --localmem=$GB --include-introns --chemistry=$chemistry
+$bamCoverage -b 10xGEX/outs/possorted_genome_bam.bam -o ${RUN}.GEX.RPKM.bedgraph --binSize 5 --outFileFormat bedgraph --normalizeUsing RPKM -p $NTHREAD10x
+$pigz -p $NTHREAD10x ${RUN}.GEX.RPKM.bedgraph
 
 ENDHERE
 
-runid=$(submitjob $pbs)
+jidgex=$(submitjob "$pbs")
+
+export jidgex
+runid=$jidgex
 echo "mapGEX10x $runid $pbs.log" >&2
 echo "$pbs job is submitted..."
 echo "."
@@ -478,17 +441,18 @@ echo "Submitting $pbs under $PWD"
 export cpudir=$maindir/$RUN/bulkChiatac
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n $NTHREAD  # number of threads
-#SBATCH --mem 40G # memory pool for all cores # XYH some Memory
+#SBATCH --mem ${MAPPING_GB}G # memory pool for all cores # XYH some Memory
 #SBATCH --partition=${smallQUEUE}
 #SBATCH --job-name $jobname
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
-cd $cpudir
+set -eo pipefail
+cd "$cpudir"
 
 export genome=$genome
 echo "Reference genome:"
@@ -553,17 +517,18 @@ pbs=${jobname}.slurm
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n $NTHREAD  # number of threads
-#SBATCH --mem 40G # memory pool for all cores # XYH some Memory
+#SBATCH --mem ${MAPPING_GB}G # memory pool for all cores # XYH some Memory
 #SBATCH --partition=${smallQUEUE}
 #SBATCH --job-name $jobname
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
-cd $cpudir
+set -eo pipefail
+cd "$cpudir"
 echo  STARTED ${jobname}  
 date 
 # $cpuprog pair -s $selfbp -S -t ${NTHREAD} -q $minMapScore ${RUN}.${LABEL}.sam.gz 1>${RUN}.${LABEL}.stat.xls # xyh
@@ -614,17 +579,18 @@ nrBAM=${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n $NTHREAD  # number of threads
-#SBATCH --mem 40G # memory pool for all cores # XYH some Memory
+#SBATCH --mem ${MAPPING_GB}G # memory pool for all cores # XYH some Memory
 #SBATCH --partition=${smallQUEUE}
 #SBATCH --job-name $jobname
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
-cd $cpudir
+set -eo pipefail
+cd "$cpudir"
 
 echo  'Computing span of paired tags started...' 
 date 
@@ -694,7 +660,7 @@ picksam=${RUN}.${LABEL}.UxxU.picked.sam.gz
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n $cbNthread  # number of threads
@@ -704,23 +670,24 @@ cat << ENDHERE > $pbs
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
-cd $cpudir
-export PATH=${toolsbin}:\$PATH
+set -eo pipefail
+cd "$cpudir"
+# Software commands are supplied by the configuration.
 
 date
 
 echo  STARTED ${jobname}   
-# $samcmd view -F 2048 -F 4 -h $UxxUbam |python $pickUpy | $pigz -p $cbNthread  > $picksam # xyh
-$samcmd view -F 2048 -F 4 -h $UxxUbam | python $pickUpy ${mapq} | $pigz -p $cbNthread  > $picksam
+# $samcmd view -F 2048 -F 4 -h $UxxUbam |$python "$pickUpy" | $pigz -p $cbNthread  > $picksam # xyh
+$samcmd view -F 2048 -F 4 -h $UxxUbam | $python "$pickUpy" ${mapq} | $pigz -p $cbNthread  > $picksam
 # Add CB & ZB tags to UU.bam to for generating fragments.tsv
 if [ '$LABEL' == '$pairlabel' ]; then 
     echo "Get CB in the $UUbam"  
     date  
-    $samcmd  view -F 2048 -@ $cbNthread -h $UUbam | python $addCBpy $pkl > ${RUN}.${pairlabel}.UU.F2048.CB.sam
+    $samcmd  view -F 2048 -@ $cbNthread -h $UUbam | $python "$addCBpy" $pkl > ${RUN}.${pairlabel}.UU.F2048.CB.sam
     echo "CB injected to ${RUN}.${pairlabel}.UU.F2048.CB.sam "
     echo "count nrPET CB in ${RUN}.${pairlabel}.UU.F2048.CB.sam"
     date
-    $samcmd view  ${RUN}.${pairlabel}.UU.F2048.CB.sam | python $statpy_bamTag  > ${RUN}.${pairlabel}.UU.F2048.CB.PET.tsv
+    $samcmd view  ${RUN}.${pairlabel}.UU.F2048.CB.sam | $python "$statpy_bamTag"  > ${RUN}.${pairlabel}.UU.F2048.CB.PET.tsv
 
     echo "Continue to sort & dedup ..."
     date
@@ -730,22 +697,22 @@ if [ '$LABEL' == '$pairlabel' ]; then
     echo "Query sort then count nrPET CB in ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam"
     date
     $samcmd sort -n -@ $cbNthread -o ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam  #nsorted for cpu cluster then ChiaSig
-    $samcmd view -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam | python $statpy_bamTag  > ${RUN}.${pairlabel}.UU.F2048.CB.nrPET.tsv
+    $samcmd view -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam | $python "$statpy_bamTag"  > ${RUN}.${pairlabel}.UU.F2048.CB.nrPET.tsv
 
     echo "Generating interaction ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe"
     date
-    # $samcmd sort -n -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam | $samcmd view -h | perl $injectCBreadID | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe  # xyh
-    $samcmd view -h ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam | perl $injectCBreadID | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe
+    # $samcmd sort -n -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam | $samcmd view -h | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe  # xyh
+    $samcmd view -h ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe
 
     echo "Get CB in the $UxxUbam"
     date
-    $samcmd view -h $picksam | python $addCBpy $pkl | grep -v noCB  | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
+    $samcmd view -h $picksam | $python "$addCBpy" $pkl | grep -v noCB  | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
     $dedup -M ${RUN}.${pairlabel}.UxxU.F2048.CB.nr.MarkDuplicates.txt -O ${RUN}.${pairlabel}.UxxU.F2048.CB.nr.bam  -I ${RUN}.${pairlabel}.UxxU.F2048.CB.csorted.bam
 
     echo "Get CBstats  $UxxUbam"
     date
-    $samcmd view $picksam  | python $statpy_noTag $pkl > ${RUN}.${LABEL}.UxxU.F2048.CB.tsv
-    $samcmd view ${RUN}.${LABEL}.UxxU.F2048.CB.nr.bam | python $statpy_noTag $pkl  > ${RUN}.${LABEL}.UxxU.F2048.CB.nr.tsv 
+    $samcmd view $picksam  | $python "$statpy_noTag" $pkl > ${RUN}.${LABEL}.UxxU.F2048.CB.tsv
+    $samcmd view ${RUN}.${LABEL}.UxxU.F2048.CB.nr.bam | $python "$statpy_noTag" $pkl  > ${RUN}.${LABEL}.UxxU.F2048.CB.nr.tsv 
 
     $pigz -p $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.sam
     $pigz -p $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe
@@ -756,52 +723,52 @@ fi
 if [ '$LABEL' == '$singlabel' ]; then 
     echo "Get CB in the $UxxUbam"
     date
-    $samcmd view -h $picksam | python $addCBpy $pkl | grep -v noCB  | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
+    $samcmd view -h $picksam | $python "$addCBpy" $pkl | grep -v noCB  | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
     echo "Dedup starts "
     date
     $dedup -M ${RUN}.${singlabel}.UxxU.F2048.CB.nr.MarkDuplicates.txt -O ${RUN}.${singlabel}.UxxU.F2048.CB.nr.bam  -I ${RUN}.${singlabel}.UxxU.F2048.CB.csorted.bam
     echo "Get CBstats  $UxxUbam"
     date
-    $samcmd view $picksam  | python $statpy_noTag $pkl > ${RUN}.${LABEL}.UxxU.F2048.CB.tsv
-    $samcmd view ${RUN}.${LABEL}.UxxU.F2048.CB.nr.bam | python $statpy_noTag $pkl  > ${RUN}.${LABEL}.UxxU.F2048.CB.nr.tsv 
+    $samcmd view $picksam  | $python "$statpy_noTag" $pkl > ${RUN}.${LABEL}.UxxU.F2048.CB.tsv
+    $samcmd view ${RUN}.${LABEL}.UxxU.F2048.CB.nr.bam | $python "$statpy_noTag" $pkl  > ${RUN}.${LABEL}.UxxU.F2048.CB.nr.tsv 
 fi
 
 if [ '$LABEL' == '$nonelabel' ]; then 
     echo "Get CB in the $UUbam"
     date  
-    $samcmd  view -F 2048 -@ $cbNthread -h $UUbam | python $addCBpy $pkl > ${RUN}.${nonelabel}.UU.F2048.CB.sam
+    $samcmd  view -F 2048 -@ $cbNthread -h $UUbam | $python "$addCBpy" $pkl > ${RUN}.${nonelabel}.UU.F2048.CB.sam
     echo "CB injected to ${RUN}.${nonelabel}.UU.F2048.CB.sam "
     echo "count nrPET CB in ${RUN}.${nonelabel}.UU.F2048.CB.sam"
     date
-    $samcmd view ${RUN}.${nonelabel}.UU.F2048.CB.sam | python $statpy_bamTag > ${RUN}.${nonelabel}.UU.F2048.CB.PET.tsv
+    $samcmd view ${RUN}.${nonelabel}.UU.F2048.CB.sam | $python "$statpy_bamTag" > ${RUN}.${nonelabel}.UU.F2048.CB.PET.tsv
 
     echo "Continue to sort & dedup ..."
     date
     grep -v noCB ${RUN}.${nonelabel}.UU.F2048.CB.sam | $samcmd sort -@ $cbNthread -o ${RUN}.${nonelabel}.UU.F2048.CB.csorted.bam
     $dedup -M ${RUN}.${nonelabel}.UU.F2048.CB.nr.MarkDuplicates.txt -O ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam  -I ${RUN}.${nonelabel}.UU.F2048.CB.csorted.bam
-    $samcmd view -F 2048 -F 4 ${RUN}.${LABEL}.UU.F2048.CB.nr.bam | python $statpy_noTag $pkl  > ${RUN}.${LABEL}.UU.F2048.CB.nr.tsv
-    $samcmd view -F 2048 -F 4 ${RUN}.${LABEL}.UU.F2048.CB.nr.bam | python $statpy_bamTag > ${RUN}.${nonelabel}.UU.F2048.CB.nr.PET.tsv
-    $samcmd  view -F 2048 -@ $cbNthread  $UUbam | python $statpy_noTag $pkl  > ${RUN}.${LABEL}.UU.F2048.CB.tsv 
+    $samcmd view -F 2048 -F 4 ${RUN}.${LABEL}.UU.F2048.CB.nr.bam | $python "$statpy_noTag" $pkl  > ${RUN}.${LABEL}.UU.F2048.CB.nr.tsv
+    $samcmd view -F 2048 -F 4 ${RUN}.${LABEL}.UU.F2048.CB.nr.bam | $python "$statpy_bamTag" > ${RUN}.${nonelabel}.UU.F2048.CB.nr.PET.tsv
+    $samcmd  view -F 2048 -@ $cbNthread  $UUbam | $python "$statpy_noTag" $pkl  > ${RUN}.${LABEL}.UU.F2048.CB.tsv 
 
     echo "Query sort then count nrPET CB in ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam"
     date
     $samcmd sort -n -@ $cbNthread -o ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.bam ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam
-    python ${filtersmallsize} ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.bam ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted
-    $samcmd view -@ $cbNthread ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam | python $statpy_bamTag  > ${RUN}.${nonelabel}.UU.F2048.CB.pet.nr.PET.tsv
+    $python ${filtersmallsize} ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.bam ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted
+    $samcmd view -@ $cbNthread ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam | $python "$statpy_bamTag"  > ${RUN}.${nonelabel}.UU.F2048.CB.pet.nr.PET.tsv
 
     echo "Generating interaction ${RUN}.${nonelabel}.UU.F2048.CB.nr.bedpe"
     date
-    $samcmd view -h ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam | perl $injectCBreadID | $bedcmd  bamtobed -bedpe | sort -k7,7 > ${RUN}.${nonelabel}.UU.F2048.CB.nr.bedpe
+    $samcmd view -h ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe | sort -k7,7 > ${RUN}.${nonelabel}.UU.F2048.CB.nr.bedpe
 
     echo "Get CB in the $UxxUbam"
     date
-    $samcmd view -h $picksam | python $addCBpy $pkl | grep -v noCB  | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
+    $samcmd view -h $picksam | $python "$addCBpy" $pkl | grep -v noCB  | $samcmd sort -@ $cbNthread -o ${RUN}.${LABEL}.UxxU.F2048.CB.csorted.bam
     $dedup -M ${RUN}.${nonelabel}.UxxU.F2048.CB.nr.MarkDuplicates.txt -O ${RUN}.${nonelabel}.UxxU.F2048.CB.nr.bam  -I ${RUN}.${nonelabel}.UxxU.F2048.CB.csorted.bam
 
     echo "Get CBstats  $UxxUbam"
     date
-    $samcmd view $picksam  | python $statpy_noTag $pkl > ${RUN}.${LABEL}.UxxU.F2048.CB.tsv
-    $samcmd view ${RUN}.${LABEL}.UxxU.F2048.CB.nr.bam | python $statpy_noTag $pkl  > ${RUN}.${LABEL}.UxxU.F2048.CB.nr.tsv 
+    $samcmd view $picksam  | $python "$statpy_noTag" $pkl > ${RUN}.${LABEL}.UxxU.F2048.CB.tsv
+    $samcmd view ${RUN}.${LABEL}.UxxU.F2048.CB.nr.bam | $python "$statpy_noTag" $pkl  > ${RUN}.${LABEL}.UxxU.F2048.CB.nr.tsv 
 
     $pigz -p $cbNthread ${RUN}.${nonelabel}.UU.F2048.CB.sam
     $pigz -p $cbNthread ${RUN}.${nonelabel}.UU.F2048.CB.nr.bedpe
@@ -850,7 +817,7 @@ pbs=${jobname}.slurm
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n 1 # number of threads
@@ -860,14 +827,15 @@ cat << ENDHERE > $pbs
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
-cd $cpudir
-export PATH=${toolsbin}:\$PATH
+set -eo pipefail
+cd "$cpudir"
+# Software commands are supplied by the configuration.
 
 date
 SECONDS=0
 
 echo  STARTED $jobname 
-$samcmd view ${RUN}.${LABEL}.sam.gz | python $statpy_noTag  $pkl  > ${RUN}.${LABEL}.statCB.totalPET.tsv 
+$samcmd view ${RUN}.${LABEL}.sam.gz | $python "$statpy_noTag"  $pkl  > ${RUN}.${LABEL}.statCB.totalPET.tsv 
 echo "$jobname completed in \$SECONDS secs."
 date
 
@@ -896,6 +864,8 @@ local j2=$3
 local j3=$4
 local j4=$5
 local j5=$6
+local j6=$7
+local j7=$8
 
 export wdir=$maindir/$RUN
 export cpudir=$maindir/$RUN/bulkChiatac
@@ -905,30 +875,33 @@ pbs=${jobname}.slurm
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n 1  # number of threads
-#SBATCH --mem 8G # memory pool for all cores # XYH little Memory
+#SBATCH --mem ${TABLE_GB}G # memory pool for all cores # XYH little Memory
 #SBATCH --partition=${smallQUEUE}
 #SBATCH --job-name $jobname
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
+set -eo pipefail
 # module load R-3.6.1
-cd $cpudir
+cd "$cpudir"
 
 date
 SECONDS=0
 
 echo  STARTED $jobname 
-$Rcmd $mergeTable ${RUN} # xyh change Rscript
+$Rcmd "$mergeTable" ${RUN} # xyh change Rscript
 echo "$jobname completed in \$SECONDS secs."
 date
 
 ENDHERE
 
-export jid_tsv=$(submitjobOptional8  $pbs $j1 $j2 $j3 $j4 $j5)
+jid_tsv=$(submitjobOptional8  $pbs $j1 $j2 $j3 $j4 $j5 $j6 $j7)
+
+export jid_tsv
 echo "combine_tsv $jobname $jid_tsv $pbs.log" >&2
 echo "$pbs queued and wait for $j1 $j2 $j3 $j4 $j5 to finish."
 echo '...'
@@ -950,7 +923,7 @@ local j3=$4
 export wdir=$maindir/$RUN
 export cpudir=$maindir/$RUN/bulkChiatac
 export jobdir=$maindir/$RUN/slurm
-export partTHREAD=$((NTHREAD/2))
+export partTHREAD=$(( (NTHREAD + 1) / 2 ))
 
 jobname=${RUN}.mergeFinalBAM
 pbs=${jobname}.slurm
@@ -960,17 +933,18 @@ finalSuf=$RUN.F2048.CBreadID.nr.final
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n $NTHREAD  # number of threads
-#SBATCH --mem 36G # memory pool for all cores # XYH some Memory
+#SBATCH --mem ${MERGE_GB}G # memory pool for all cores # XYH some Memory
 #SBATCH --partition=${smallQUEUE}
 #SBATCH --job-name $jobname
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
-cd ${cpudir}
+set -eo pipefail
+cd "${cpudir}"
 
 date 
 SECONDS=0
@@ -981,7 +955,7 @@ date
 # ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam
 # ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam
 $samcmd view -H ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam | grep '^@SQ' | cut -f 2-3 |grep -v '_chr' | sed s?SN:?? | sed s?LN:??   > ${genome}.chrlength.txt
-# python $Sbam2fragment ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam | $samcmd sort -@ $NTHREAD -o ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam.tmp -
+# $python "$Sbam2fragment" ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam | $samcmd sort -@ $NTHREAD -o ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam.tmp -
 $samcmd sort -@ $NTHREAD -o ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam.tmp ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.pet.bam
 $samcmd view -@ $NTHREAD -Sb -f 64 ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam | $samcmd sort -@ $NTHREAD -o ${RUN}.${nonelabel}.UU.F2048.CB.nr.nsorted.singleton.bam.tmp -
 
@@ -995,7 +969,7 @@ $bedcmd intersect -v -nonamecheck -a ${RUN}.tmp.bam -b $blacklist > ${RUN}.nobl.
 
 SECONDS=0
 echo  "Injecting CB to readID ...  "  
-$samcmd view -h -@ ${partTHREAD} ${RUN}.nobl.bam  | perl $injectCBreadID | $samcmd view -@ ${partTHREAD} -o ${finalSuf}.bam -
+$samcmd view -h -@ ${partTHREAD} ${RUN}.nobl.bam  | perl "$injectCBreadID" | $samcmd view -@ ${partTHREAD} -o ${finalSuf}.bam -
 echo  "done in \$SECONDS secs."  
 
 #Generate bigwig for visualization
@@ -1004,6 +978,7 @@ $scom bedSort ${finalSuf}.bedgraph  ${finalSuf}.sorted.bedgraph
 
 # $samcmd view -H ${RUN}.${nonelabel}.UU.F2048.CB.nr.bam | grep '^@SQ' | cut -f 2-3 |grep -v '_chr' | sed s?SN:?? | sed s?LN:??   > ${genome}.chrlength.txt # xyh
 $scom bedGraphToBigWig  ${finalSuf}.sorted.bedgraph  ${genome}.chrlength.txt ${finalSuf}.bw
+$bamCoverage -b ${finalSuf}.bam -o ${RUN}.ATAC.RPKM.bedgraph --binSize 5 --outFileFormat bedgraph --normalizeUsing RPKM -p $NTHREAD
 echo -e  "Done converting to bigwig n" 
 date 
 
@@ -1011,21 +986,21 @@ date
 SECONDS=0
 echo "Starting to get fragments.tsv from ${finalSuf}.bam" 
 date  
-# perl $bamtofrag --read_file ${finalSuf}.bam --output_file ${tsvfile} --samtools_path $toolsbin # xyh
-python $bamtofrag ${finalSuf}.bam ${tsvfile}
-# perl $bamtofrag --read_file ${finalSuf}.bam --output_file ${tsvfile}.tmptmp --samtools_path $toolsbin # xyh
+# perl "$bamtofrag" --read_file ${finalSuf}.bam --output_file ${tsvfile} --samtools_path $toolsbin # xyh
+$python "$bamtofrag" ${finalSuf}.bam ${tsvfile}
+# perl "$bamtofrag" --read_file ${finalSuf}.bam --output_file ${tsvfile}.tmptmp --samtools_path $toolsbin # xyh
 # mv ${tsvfile}.tmptmp.len ${tsvfile}.len # xyh
 # awk -v OFS="\t" '{if(\$2<0){\$2=0}print \$0}' ${tsvfile}.tmptmp > ${tsvfile} # xyh
 # rm ${tsvfile}.tmptmp # xyh
 echo  "done in \$SECONDS secs."  
 date
 
-$toolsbin/bgzip -f ${tsvfile}.len # xyh
+$bgzip -f ${tsvfile}.len # xyh
 
-$Rbin/Rscript --vanilla $sortfrag ${tsvfile} 
+$Rcmd --vanilla "$sortfrag" ${tsvfile} 
 
-$toolsbin/bgzip -f ${tsvfile} # xyh
-$toolsbin/tabix -f -p bed ${tsvfile}.gz # xyh
+$bgzip -f ${tsvfile} # xyh
+$tabix -f -p bed ${tsvfile}.gz # xyh
 
 echo "Call peaks using ${RUN}.forpeak.rmbl.bed"  
 $bedcmd bamtobed -i ${finalSuf}.bam | $bedcmd intersect -v -nonamecheck -a stdin -b $blacklist > ${RUN}.forpeak.rmbl.bed
@@ -1053,6 +1028,7 @@ ENDHERE
 
 jm=$(submitjobOptional8  $pbs $j1 $j2 $j3)
 echo "combine_tsv $jobname $jm $pbs.log" >&2
+export jidmerge=$jm
 storeMergeJOBid $jm
 echo "$pbs queued and wait for $j1 $j2 $j3 to finish."
 echo '...'
@@ -1077,16 +1053,17 @@ pbs=${jobname}.slurm
 echo "Submitting $pbs under $PWD"
 
 cat << ENDHERE > $pbs
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 #SBATCH -N 1 # number of nodes
 #SBATCH -n 1  # number of threads
-#SBATCH --mem 2G # memory pool for all cores # XYH little Memory
+#SBATCH --mem ${SUMMARY_GB}G # memory pool for all cores # XYH little Memory
 #SBATCH --partition=${smallQUEUE}
 #SBATCH --job-name $jobname
 #SBATCH --output="$jobname.slurm.o"
 #SBATCH --error="$jobname.slurm.e"
 
+set -eo pipefail
 SECONDS=0
 
 echo  STARTED $jobname 
@@ -1094,7 +1071,7 @@ date
 
 #Summary including peaks
 cd ${cpudir} 
-$sumsh $RUN $genome
+"$sumsh" $RUN $genome
 
 echo "Organize files under $PWD"
 #Clearing files
@@ -1111,7 +1088,9 @@ date
 
 ENDHERE
 
-export jid_clean=$(submitjobOptional8  $pbs $j1 $j2 $j3)
+jid_clean=$(submitjobOptional8  $pbs $j1 $j2 $j3)
+
+export jid_clean
 echo "summaryJob $jobname $jid_clean $pbs.log" >&2
 echo "$pbs queued and wait for $j1 $j2 $j3 to finish."
 echo '...'
@@ -1128,7 +1107,7 @@ export RUN=$(basename $fqpref)
 export wdir=$maindir/$RUN
 export cpudir=$maindir/$RUN/bulkChiatac
 
-cd $cpudir
+cd "$cpudir"
 echo "Organize files under $PWD"
 
 #Clearing files
@@ -1149,6 +1128,78 @@ echo 'Clearing done...'
 
 
 
+
+function preparePETStats {
+    local RUN=$(basename "$1")
+    local cpudir=$maindir/$RUN/bulkChiatac
+    local pbs=$maindir/$RUN/slurm/${RUN}.PETstats.slurm
+    shift
+    cat << ENDHERE > "$pbs"
+#!/usr/bin/env bash
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --mem ${TABLE_GB}G
+#SBATCH --partition=${smallQUEUE}
+#SBATCH --output="${pbs}.out"
+#SBATCH --error="${pbs}.err"
+set -eo pipefail
+cd "$cpudir"
+# Reuse the barcode/name separation and PET counter from the author workflow.
+zcat ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe.gz ${RUN}.${nonelabel}.UU.F2048.CB.nr.bedpe.gz | \
+    perl -lane '@tmp=split(/:/,\$F[6],2); print join("\t",@F[0..5],@tmp,@F[7..9])' | \
+    $python "$CountBarcodePET" /dev/stdin ${RUN}.hq.CB.nr.bedpe.stat
+ENDHERE
+    jidpetstats=$(submitjob "$pbs" "$@")
+    export jidpetstats
+}
+
+function reanalyzeATAC {
+    local RUN=$(basename "$1")
+    local wdir=$maindir/$RUN
+    local cpudir=$wdir/bulkChiatac
+    local pbs=$wdir/slurm/${RUN}.ATACreanalyze.slurm
+    shift
+    cat << ENDHERE > "$pbs"
+#!/usr/bin/env bash
+#SBATCH -N 1
+#SBATCH -n ${NTHREAD10x}
+#SBATCH --mem ${GB}G
+#SBATCH --partition=${QUEUE}
+#SBATCH --output="${pbs}.out"
+#SBATCH --error="${pbs}.err"
+set -eo pipefail
+cd "$wdir"
+awk '\$7+0 > $peak_signal_min' "$cpudir/${RUN}_peaks.narrowPeak" | grep -v -i chrM | cut -f 1-3 > "$cpudir/${RUN}.peak"
+$atac10x --id 10xATAC --peaks "$cpudir/${RUN}.peak" --fragments "$cpudir/${RUN}.fragments.tsv.gz" --reference "$ATACref" --localcores ${NTHREAD10x}
+ENDHERE
+    jidatac=$(submitjob "$pbs" "$@")
+    export jidatac
+}
+
+function analyzeCells {
+    local RUN=$(basename "$1")
+    local wdir=$maindir/$RUN
+    local pbs=$wdir/slurm/${RUN}.callcell.slurm
+    shift
+    cat << ENDHERE > "$pbs"
+#!/usr/bin/env bash
+#SBATCH -N 1
+#SBATCH -n ${NTHREAD}
+#SBATCH --mem ${DOWNSTREAM_GB}G
+#SBATCH --partition=${QUEUE}
+#SBATCH --output="${pbs}.out"
+#SBATCH --error="${pbs}.err"
+set -eo pipefail
+export CHAIR_MIN_RNA=$CHAIR_MIN_RNA CHAIR_MIN_ATAC=$CHAIR_MIN_ATAC CHAIR_MIN_PET=$CHAIR_MIN_PET
+export CHAIR_MAX_MT=$CHAIR_MAX_MT CHAIR_MAX_RIBO=$CHAIR_MAX_RIBO CHAIR_DOUBLET_RATE=$CHAIR_DOUBLET_RATE CHAIR_SEED=$CHAIR_SEED
+export CHAIR_RNA_DIMS=$CHAIR_RNA_DIMS CHAIR_ATAC_DIMS=$CHAIR_ATAC_DIMS
+export CHAIR_RNA_RESOLUTION=$CHAIR_RNA_RESOLUTION CHAIR_ATAC_RESOLUTION=$CHAIR_ATAC_RESOLUTION CHAIR_WNN_RESOLUTION=$CHAIR_WNN_RESOLUTION
+$Rcmd --vanilla "$tmppath/callcell_xingyu.R" "$RUN" "$wdir/10xGEX/outs/raw_feature_bc_matrix.h5" "$wdir/10xATAC/outs/raw_peak_bc_matrix.h5" "$wdir/bulkChiatac/${RUN}.fragments.tsv.gz" "$wdir/bulkChiatac/${RUN}.hq.CB.nr.bedpe.stat" "$wdir/CallCell" "$genome"
+ENDHERE
+    jidcells=$(submitjob "$pbs" "$@")
+    export jidcells
+}
+
 #------- loop & submit
 
 #Below shows the example for complete run from the begining:
@@ -1156,34 +1207,38 @@ echo 'Clearing done...'
 #Format of fqlist is one library per row consists of  2 columns
 #Modify below if needed to run specific tasks
 #(Don't worry about slurm job IDs [$jid_tsv, $jidMerge, $dedupIDs], they will be populated automatically)
-fqlist=$1
-while read dna rna ; do
+while read -r dna rna extra; do
+   [[ -z "$dna" || "$dna" == \#* ]] && continue
+   [[ -n "$rna" && -z "$extra" ]] || die "Expected two FASTQ prefixes per row"
+   dna=$(realpath "$dna")
+   rna=$(realpath "$rna")
+   dedupIDs1=""; dedupIDs2=""; storedIDtsv=""; jidMerge=""
+   jidpkl=""; jidgex=""; jidChiasig=""; jidmerge=""
 echo "read -- $dna -- $rna "
    RUN=$(basename $dna)   
    export wdir=$maindir/$RUN
    export cpudir=$wdir/bulkChiatac
    export jobdir=$wdir/slurm
-   cd $maindir
+   cd "$maindir"
    odir $RUN
-   odir $jobdir
-   odir $cpudir && odir $cpudir/$dumpfolder 
-   cd $jobdir
-   #run processes:
-   # mapARC10x $dna $rna #run10x 
-   mapGEX10x $dna $rna #run10x scRNA if needed 
-   sleep 1
-   # cpuLinker $dna; #will run from linker detection all the way to dedupCB
-   sleep 7
-   # mergeFinalBAM $dna  $dedupIDs1
-   sleep 7
-   # combine_tsv $dna $dedupIDs1 
-   sleep 7
-   # summaryJob $dna $jid_tsv $jidMerge
+   odir "$jobdir"
+   odir "$cpudir" && odir "$cpudir/$dumpfolder" 
+   cd "$jobdir"
+   mapARC10x "$dna" "$rna"
+   mapGEX10x "$dna" "$rna"
+   cpuLinker "$dna"
+   mergeFinalBAM "$dna" $dedupIDs1
+   combine_tsv "$dna" $dedupIDs1 $storedIDtsv
+   preparePETStats "$dna" $dedupIDs1
+   reanalyzeATAC "$dna" "$jidmerge"
+   analyzeCells "$dna" "$jidgex" "$jidatac" "$jidpetstats"
+   summaryJob "$dna" "$jid_tsv" "$jidmerge" "$jidChiasig"
    echo "All jobs for $dna submitted"
    date
    echo ''
    echo '-------------------------------------------'
    echo ''
-done < $fqlist 
+done < "$fqlist" 
+
 
 
