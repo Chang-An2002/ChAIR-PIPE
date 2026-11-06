@@ -63,128 +63,145 @@ II -- cellranger-atac --> JJ[scATAC matrix]
 IIA -- cellranger-atac --> JJ
 ```
 
-# REQUIREMENT
-```
-ChIAPET-pipeline (https://github.com/TheJacksonLaboratory/ChIA-PIPE)
-MACS v2.2.7.1
-BEDTools v2.27.1
-SAMTools v1.9
-DeepTools v3.5.1
-Juicer tools 1.22.01 
-HiCRep Python version https://github.com/dejunlin/hicrep
-HiCExplorer v3.5
-hisat v2.1.0 
-htseq-count v0.13.5
-R 4.4 or later recommended
-Seurat 4.3.0
-Signac 1.10.0
-harmony 0.1.1
-DoubletFinder 2.0.3
-cellranger 6.0.0
-cellranger-arc 2.0.2
-cellranger-atac 2.1.0
-dip-c: https://github.com/tanlongzhi/dip-c
-Nucdynamic: https://github.com/tjs23/nuc_dynamics
-CrossMap v0.6.1
-monocle3 1.3.5
-bwa 0.7.17
-bcftools 1.17
-ucsc_kentUtils: https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/
-singularity 3.8.5-2.el7
-Picard
-BandNorm
-Dip-c
-Nuc
-CtG
+## Installation
 
-Python
-R
-Perl
+Use Linux with SLURM, Singularity/Apptainer and Conda or Mamba.
 
-Slurm
-```
-Some tools can be run using Singularity images. Set their command prefixes in the configuration.
-```
-cellranger_6.0.0.sif
-cpu0.0.1a-r2.sumner.sif
-GATK_latest.sif
-juicer_1.22.01.sif
-```
-```
-cp cellranger_6.0.0.sif cpu0.0.1a-r2.sumner.sif GATK_latest.sif juicer_1.22.01.sif singularity
+```bash
+git clone -b protocol-revision-20261105 https://github.com/Chang-An2002/ChAIR-PIPE.git
+cd ChAIR-PIPE
+mkdir -p singularity
+singularity build singularity/scMAV.sif docker://fengchuiguo1994/scmav:v1
 ```
 
-## Run the complete analysis
+The upstream tools are selected through command prefixes in the configuration. To inspect the container commands:
 
-Use Linux with SLURM. Copy `config/example.mm10.env`, set the reference paths, software commands, output directory and SLURM resources, then run the entry point. The configuration lists the analysis defaults and accepts installed tools or container command prefixes.
+```bash
+singularity exec singularity/scMAV.sif cellranger --version
+singularity exec singularity/scMAV.sif cpu
+singularity exec singularity/scMAV.sif gatk --version
+singularity exec singularity/scMAV.sif juicer_tools -h
+```
 
-Create a tab-separated table with one DNA FASTQ prefix and one RNA FASTQ prefix per row. Each prefix ends before `_S..._L..._R...`; use absolute paths. DNA uses R1/R3 for genomic reads and R2 for the barcode.
+Prepare the R environment for downstream analysis and Viewer plotting:
+
+```bash
+conda create -y -n chair-r -c conda-forge r-base=4.4.1 r-remotes r-biocmanager \
+  c-compiler cxx-compiler fortran-compiler cmake make pkg-config libxml2 libcurl openssl hdf5 gsl
+conda run --no-capture-output -n chair-r Rscript config/install_r_packages.R mm10
+# For human data, use hg38 as the last argument.
+```
+
+The R analysis was tested with R 4.4.1, Matrix 1.7-3, Seurat 5.3.0, SeuratObject 5.1.0, Signac 1.14.0 and DoubletFinder 2.0.4. Python input preparation uses pysam and bx-python.
+
+## Reference files
+
+Download matching GEX and ARC references from [10x Genomics](https://www.10xgenomics.com/support/software/cell-ranger-arc/downloads#reference-downloads). The ARC 2.0 reference is also used by `cellranger-atac reanalyze`. For example, for hg38:
+
+```bash
+mkdir -p /data/references
+cd /data/references
+wget https://cf.10xgenomics.com/supp/cell-exp/refdata-gex-GRCh38-2020-A.tar.gz
+wget https://cf.10xgenomics.com/supp/cell-arc/refdata-cellranger-arc-GRCh38-2020-A-2.0.0.tar.gz
+tar -xzf refdata-gex-GRCh38-2020-A.tar.gz
+tar -xzf refdata-cellranger-arc-GRCh38-2020-A-2.0.0.tar.gz
+wget https://raw.githubusercontent.com/Boyle-Lab/Blacklist/master/lists/hg38-blacklist.v2.bed.gz
+gzip -dk hg38-blacklist.v2.bed.gz
+singularity exec /absolute/path/to/scMAV.sif bwa index \
+  refdata-cellranger-arc-GRCh38-2020-A-2.0.0/fasta/genome.fa
+```
+
+For mm10, select the mm10 GEX/ARC references and mm10 blacklist. Set `fasta` to the indexed genome FASTA. Genome assembly and chromosome names must match across these inputs.
+
+## Configure a run
+
+Copy the supplied example to your own configuration file:
+
+```bash
+cd /absolute/path/to/ChAIR-PIPE
+cp config/example.mm10.env config/my_run.env
+```
+
+Edit `config/my_run.env`:
+
+| Setting | Value to supply |
+| --- | --- |
+| `genome`, `gmac` | `mm10`, `mm` for mouse; `hg38`, `hs` for human |
+| `ARCref`, `GEXref`, `ATACref` | Extracted reference directories; `ATACref` can use the matching ARC 2.0 reference |
+| `fasta`, `blacklist` | Indexed genome FASTA and uncompressed blacklist BED |
+| `image`, `Rcmd` | Absolute scMAV image path and the Rscript command for the prepared R environment |
+| `SINGULARITY_BIND` | Comma-separated base directories containing data, references and outputs |
+| `OUTPUT_DIR` | Analysis output directory |
+| `QUEUE`, `smallQUEUE`, `highpart` | SLURM partition names |
+| Thread and memory settings | Resources available on your cluster |
+| `addLinkerSeq` | DNA linker; the supplied K562/ChAIR example uses `-A ATAGGCGCTGGTTGCGTTGT` |
+
+Create `samples.tsv` with one DNA prefix and one RNA prefix per row, separated by a tab. Use absolute paths ending before `_S..._L..._R...`. DNA R1/R3 contain genomic reads and R2 contains the barcode.
 
 ```text
-/data/fastq/MOSCCA0020-15872_SI-NA-D6	/data/fastq/MOSCCA0015-15878_GTAACATGCG-AGGTAACACT
+/data/fastq/SCG0074-15872_SI-NA-D6	/data/fastq/SCG0081-15878_GTAACATGCG-AGGTAACACT
 ```
+
+## Run the analysis
 
 ```bash
 bash submit_cpu10x_for_scChiatac.mm10.nobl.sh samples.tsv config/my_run.env
 ```
 
-The entry point submits ARC barcode assignment, independent RNA counting, CPU DNA processing, fragment and peak generation, ATAC reanalysis, PET statistics, and downstream cell analysis with success dependencies between stages. Outputs are written below `OUTPUT_DIR/<DNA-prefix-basename>/`.
+The entry submits ARC barcode assignment, RNA counting, DNA alignment and deduplication, fragment/peak generation, ATAC reanalysis, PET statistics and downstream R analysis with SLURM success dependencies. Job scripts and logs are in `OUTPUT_DIR/<sample>/slurm/`.
 
-| Output | Relative location |
+| Output under `OUTPUT_DIR/<sample>/` | Contents |
 | --- | --- |
-| RNA matrix | `10xGEX/outs/raw_feature_bc_matrix.h5` |
-| ATAC matrix from the pipeline's fragments and peaks | `10xATAC/outs/raw_peak_bc_matrix.h5` |
-| Fragment intervals and index | `bulkChiatac/<sample>.fragments.tsv.gz` and `.tbi` |
-| PET statistics | `bulkChiatac/<sample>.hq.CB.nr.bedpe.stat` |
-| Final Seurat object | `CallCell/data/<sample>.final.rds` |
-| QC-passed Seurat object, including RNA doublet labels, before doublet removal | `CallCell/data/<sample>.QC.rds` |
-| Complete QC metadata, including pANN, doublet labels, clusters and PET statistics | `CallCell/data/<sample>.metadata.txt` |
-| QC plots before doublet removal | `CallCell/<sample>.raw.count.pdf`, `.raw.RNAcluster.pdf` and `.raw.ATACcluster.pdf` |
-| Recorded analysis input paths | `CallCell/data/input_paths.tsv` |
+| `10xGEX/outs/raw_feature_bc_matrix.h5` | RNA matrix |
+| `10xATAC/outs/raw_peak_bc_matrix.h5` | ATAC matrix |
+| `bulkChiatac/<sample>.fragments.tsv.gz` and `.tbi` | Five-column fragments and index |
+| `bulkChiatac/<sample>.peak` | Three-column ATAC peaks |
+| `bulkChiatac/<sample>.hq.CB.nr.bedpe.stat` | Eight per-barcode PET statistics |
+| `CallCell/data/<sample>.QC.rds` | All QC-passed cells with doublet labels, pANN and RNA/ATAC reductions |
+| `CallCell/data/<sample>.metadata.txt` | Complete QC metadata |
+| `CallCell/data/<sample>.final.rds` | Singlet object with RNA/ATAC/WNN analysis |
+| `CallCell/data/final_barcodes.txt` | Final singlet barcodes |
+| `CallCell/*.pdf` and `CallCell/deepcluster/` | QC, doublet, clustering and marker plots |
+| `CallCell/data/sessionInfo.txt` and `input_paths.tsv` | Software versions and analysis input paths |
 
-Fragment export uses the author's `classPET.py` and `bam2fragment.py`: short inward-facing pairs use the paired branch; PET and other alignments use the single-end branch.
+`callcell.R` uses RNA/ATAC/PET barcode intersection and the configured QC thresholds. Defaults are RNA count ≥400, ATAC count ≥4,000, PET_intragt1000 ≥300, mitochondrial percentage <20 and ribosomal percentage <50. RNA uses `min.cells=5`, 3,000 HVGs, clustering resolution 0.8 and workflow seed 1234. DoubletFinder uses automatic pK selection, homotypic adjustment, expected rate 0.054, pN=0.25 and PCs 1:30. The ATAC reference settings are q0, LSI 2:30 and resolution 0.8. The objects retain chrY peaks and `blacklist_fraction` QC values. Parameters are set in the configuration and `codes/function.R`.
 
-`codes/callcell.R` intersects RNA, ATAC and PET barcodes and applies `nCount_RNA >= 400`, `nCount_ATAC >= 4000`, `PET_intragt1000 >= 300`, mitochondrial percentage `< 20` and ribosomal percentage `< 50`. RNA object construction uses `min.cells = 5`. The accompanying `codes/function.R` runs RNA/ATAC clustering, RNA DoubletFinder and WNN. DoubletFinder uses automatic pK selection, homotypic adjustment, an expected doublet rate of 0.054, pN = 0.25 and PCs 1:30. RNA analysis uses 3,000 highly variable genes, a workflow seed of 1234 and clustering resolution 0.8. QC thresholds and reduction settings are configured in the environment file.
-
-RNA `ScaleData` is run on all retained RNA genes before PCA; the initial RNA PCA uses the selected highly variable genes. No additional HVG-only `ScaleData` is run before DoubletFinder.
-
-ATAC input keeps standard chromosomes, including chrY when present. The reference ATAC settings remain `FindTopFeatures` cutoff `q0`, LSI dimensions 2:30, the Seurat default neighbor count, and clustering resolution 0.8. Adjust these settings for the dataset in `codes/function.R` and the configuration file.
-
-The PET table includes `PET_total`, `PET_intra`, `PET_inter`, `PET_intrale1000`, `PET_intragt1000`, `PET_intragt8000`, `PET_intragt10000` and `PET_intragt20000`. All PET columns are retained in the objects and QC metadata. `blacklist_fraction` is calculated using the matching Signac mm10 or hg38 blacklist and recorded as a QC metric. It is not an additional cell-filtering threshold.
-
-The QC object and plots contain every QC-passed cell, including RNA-predicted doublets. The ATAC QC plots are colored by the RNA DoubletFinder labels and ATAC clusters. The final object contains RNA singlets after doublet removal.
-
-For existing matrices, the same downstream entry accepts RNA/ATAC H5 files or Matrix Market directories.
+For existing matrices:
 
 ```bash
 Rscript --vanilla codes/callcell.R SAMPLE RNA_MATRIX ATAC_MATRIX FRAGMENTS PET_STATS OUTPUT_DIR mm10
 ```
 
-The fragment input requires its `.tbi` index. For hg38, set the corresponding references, `genome=hg38` and `gmac=hs` in the configuration. Downstream R requires the matching EnsDb and BSgenome packages, plus the Seurat, SeuratObject, Signac, DoubletFinder, harmony, dplyr, magrittr, ggplot2, patchwork, stringr, reshape2, matrixStats and data.table packages used by the supplied scripts. Python requires pysam. `bamCoverage` generates the RPKM tracks.
+RNA/ATAC matrices may be H5 files or Matrix Market directories; fragments require their `.tbi` index.
 
-The completed MOSCCA0020 downstream validation used R 4.4.1, Seurat 5.3.0, SeuratObject 5.1.0, Signac 1.14.0 and DoubletFinder 2.0.4. The software list above is retained from the original README; this paragraph records the tested downstream environment. The run records its actual versions in `CallCell/data/sessionInfo.txt`.
+## Prepare ChAIR-Viewer inputs
 
-## Using the original preparation examples
-
-The original data-download and file-naming examples are retained below. Put the reference and genome settings from step 4 into your configuration file, including the matching `ATACref` and blacklist. Select that file before running the original launch commands:
+After analysis, run the supplied preparation script with the sample directory, Viewer input directory, reference GTF and run configuration. On SLURM, allocate memory using the `DOWNSTREAM_GB` setting:
 
 ```bash
-export CHAIR_CONFIG=/absolute/path/to/config/my_run.env
+source config/my_run.env
+sbatch --partition="$QUEUE" --cpus-per-task=1 --mem="${DOWNSTREAM_GB}G" \
+  --wrap="bash $PWD/codes/prepare_viewer_inputs.sh /data/results/SCG0074-15872_SI-NA-D6 /data/viewer/K562 /data/references/refdata-gex-GRCh38-2020-A/genes/genes.gtf $PWD/config/my_run.env"
 ```
 
-For K562, use `genome=hg38`, `gmac=hs` and matching human references. Run all processing commands through the same entry point shown above.
+The script exports RNA intervals using the author's alignment exporter, selects final-cell ATAC/PET records, separates PET barcodes from read names, prepares fixed-anchor loops with `bedpe2ipet.py` and `loopCallingGivenAnchor.py`, converts gene annotations and writes `inputs.tsv`. The two loop-preparation scripts are the author's existing implementations. Ensemble coverage uses the sample-level RPKM tracks generated by the pipeline.
 
-# USAGE
-```
-1. Download data from CNCB (https://www.cncb.ac.cn/)
-2. Changing the file name to match cellranger's requirements
-3. download the reference index from 10xgenomics (for cellranger/cellranger-arc/cellranger-atac)
-4. bash submit_cpu10x_for_scChiatac.mm10.nobl.sh SCG0192_GT22-15872_SI-NA-D6.fastq.prefix > SCG0192_GT22-15872_SI-NA-D6.fastq.prefix.log 2>SCG0192_GT22-15872_SI-NA-D6.fastq.prefix.log.run.sh
-```
+| Prepared input | Columns/source |
+| --- | --- |
+| `RNA.intervals.tsv.gz`, `ATAC.intervals.tsv.gz` | `chrom, start, end, barcode, count` |
+| `PET.bedpe.gz` | `chrom1, start1, end1, chrom2, start2, end2, barcode, readID, score, strand1, strand2` |
+| `ATAC.peaks.bed` | `chrom, start, end` |
+| `PET.loops.tsv.gz` | Coordinates of both anchors, count, anchor1 coverage, anchor2 coverage, VC_sqrt score |
+| `genes.bed` | Eight-column gene/transcript annotation |
+| RPKM paths in `inputs.tsv` | `<sample>.GEX.RPKM.bedgraph` and `bulkChiatac/<sample>.ATAC.RPKM.bedgraph.gz` |
 
-# EXAMPLE
-```
-step1-2:
+Then follow [ChAIR-Viewer](https://github.com/Chang-An2002/ChAIR-Viewer/tree/protocol-revision-20261105) to load `inputs.tsv` and plot a region.
+
+## K562 FASTQ download and filenames
+
+Run the following commands in your FASTQ directory, then use the K562 prefixes in `samples.tsv` and the hg38 settings described above.
+
+```bash
 wget https://download.cncb.ac.cn/gsa-human/HRA007068/HRR1686121/HRR1686121.tar.gz # DNA
 wget https://download.cncb.ac.cn/gsa-human/HRA007068/HRR1686122/HRR1686122.tar.gz # RNA
 tar zxf HRR1686121.tar.gz 
@@ -195,44 +212,37 @@ mv K562_Rep1.DNA.R2_001.fastq.gz SCG0074-15872_SI-NA-D6_S5_L003_R2_001.fastq.gz
 mv K562_Rep1.DNA.R3_001.fastq.gz SCG0074-15872_SI-NA-D6_S5_L003_R3_001.fastq.gz
 mv K562_Rep1.RNA.R1_001.fastq.gz SCG0081-15878_GTAACATGCG-AGGTAACACT_S1_L001_R1_001.fastq.gz
 mv K562_Rep1.RNA.R2_001.fastq.gz SCG0081-15878_GTAACATGCG-AGGTAACACT_S1_L001_R2_001.fastq.gz
-
-step3:
-# https://www.10xgenomics.com/support/software/cell-ranger/downloads#reference-downloads
-wget https://cf.10xgenomics.com/supp/cell-exp/refdata-gex-GRCh38-2024-A.tar.gz
-tar zxf refdata-gex-GRCh38-2024-A.tar.gz
-
-# https://www.10xgenomics.com/support/software/cell-ranger-arc/downloads#reference-downloads
-wget https://cf.10xgenomics.com/supp/cell-arc/refdata-cellranger-arc-GRCh38-2024-A.tar.gz
-tar zxf refdata-cellranger-arc-GRCh38-2024-A.tar.gz
-
-step4:
-# change the parameter in submit_cpu10x_for_scChiatac.mm10.nobl.sh script：
-export genome=hg38 # hg38
-export ARCref=$abspath/refdata-cellranger-arc-GRCh38-2024-A # arc genome ref
-export GEXref=$abspath/refdata-gex-GRCh38-2024-A # gex genome ref
-fasta=hg38.fa # with hg38 bwa index
-
-# edit a input file: k562.SCG0074.fastq.prefix
-$abspath/SCG0074-15872_SI-NA-D6	$abspath/SCG0081-15878_GTAACATGCG-AGGTAACACT # No blank line breaks
-
-bash submit_cpu10x_for_scChiatac.mm10.nobl.sh k562.SCG0074.fastq.prefix > k562.SCG0074.fastq.prefix.log 2>k562.SCG0074.fastq.prefix.log.run.sh
 ```
 
-## Visualize results with ChAIR-Viewer
+<details>
+<summary>Additional analysis software</summary>
 
-Prepare the following ChAIR-PIPE outputs for the Viewer. Coverage tracks use RPKM-normalized bedGraph files.
+The following software is used for extended analyses:
 
-| Viewer input | ChAIR-PIPE source | Preparation |
-| --- | --- | --- |
-| RNA barcode intervals | `10xGEX/outs/possorted_genome_bam.bam` | Export five columns `chrom, start, end, barcode, count`. |
-| ATAC barcode intervals | `bulkChiatac/<sample>.fragments.tsv.gz` | Use the five-column interval table. |
-| ATAC peaks | `bulkChiatac/<sample>.peak` | Three columns `chrom, start, end`. |
-| Ensemble RNA coverage | `<sample>.GEX.RPKM.bedgraph.gz` | Four columns `chrom, start, end, value`. |
-| Ensemble ATAC coverage | `bulkChiatac/<sample>.ATAC.RPKM.bedgraph.gz` | Four columns `chrom, start, end, value`. |
-| Single-cell PET | `bulkChiatac/*.UU.F2048.CB.nr.bedpe.gz` | Separate the barcode prefix from the read name to prepare the Viewer's eleven-column PET table. |
-| Chromatin loops | CPU/ChiaSig loop-calling outputs | Prepare the seven-column or ten-column loop table required by the selected track. |
+```text
+ChIAPET-pipeline (https://github.com/TheJacksonLaboratory/ChIA-PIPE)
+HiCRep Python version https://github.com/dejunlin/hicrep
+HiCExplorer v3.5
+hisat v2.1.0 
+htseq-count v0.13.5
+dip-c: https://github.com/tanlongzhi/dip-c
+Nucdynamic: https://github.com/tjs23/nuc_dynamics
+CrossMap v0.6.1
+monocle3 1.3.5
+bwa 0.7.17
+bcftools 1.17
+ucsc_kentUtils: https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/
+Picard
+BandNorm
+Dip-c
+Nuc
+CtG
 
-Use matching genome assemblies and complete barcodes across tracks. Prepare gene annotations and bulk comparison tracks separately. For a selected cell population, prepare its barcode tables and RPKM coverage from the same cells. The Viewer README lists the complete file set and naming conventions used by `readInfo.R`. Organize those files with `readInfo.R`, then load and plot the RData with `loadData()` and `run()`. [ChAIR-Viewer inputs and usage](https://github.com/Chang-An2002/ChAIR-Viewer)
 
-# CONTACT
-黄星宇 (Xingyu Huang, xingyu.huang@zju.edu.cn/huang182@live.cn)
+```
+</details>
+
+## Contact
+
+黄星宇 (Xingyu Huang, xingyu.huang@zju.edu.cn/huang182@live.cn)  
+齐堃锐 (Kunrui Qi, 12407081@zju.edu.cn)
