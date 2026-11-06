@@ -119,7 +119,7 @@ singularity exec /absolute/path/to/scMAV.sif bwa index \
 
 For mm10, select the mm10 GEX/ARC references and mm10 blacklist. Set `fasta` to the indexed genome FASTA. Genome assembly and chromosome names must match across these inputs.
 
-## Prepare FASTQ inputs (protocol steps 155–156)
+## Prepare FASTQ inputs
 
 Start with demultiplexed lane-level FASTQ files from the PET, ATAC and RNA libraries of the same sample. Check that each DNA lane has R1/R2/R3 and each RNA lane has R1/R2. DNA R1/R3 contain genomic reads and R2 contains the barcode. Put the files under `INPATH/PETSAMPLEID/`, `INPATH/ATACSAMPLEID/` and `INPATH/RNASAMPLEID/`; subdirectories are also searched. Both `*_R1.fastq.gz` and `*_R1_001.fastq.gz` names, with matching R2/R3 names, are supported.
 
