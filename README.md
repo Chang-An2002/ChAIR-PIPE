@@ -142,12 +142,14 @@ The entry point submits ARC barcode assignment, independent RNA counting, CPU DN
 
 Fragment export uses the author's `classPET.py` and `bam2fragment.py`: short inward-facing pairs use the paired branch; PET and other alignments use the single-end branch.
 
-`codes/callcell_xingyu.R` applies `PET_intragt1000 > 50` and intersects RNA, ATAC and PET barcodes. It retains the author's RNA doublet filtering, RNA/ATAC clustering and WNN workflow through `codes/function.R`. QC thresholds and reduction settings are configured in the environment file.
+`codes/callcell.R` intersects RNA, ATAC and PET barcodes and applies `nCount_RNA >= 400`, `nCount_ATAC >= 4000`, `PET_intragt1000 >= 300`, mitochondrial percentage `< 20` and ribosomal percentage `< 50`. RNA object construction uses `min.cells = 5`. The accompanying `codes/function.R` runs RNA/ATAC clustering, RNA DoubletFinder and WNN. DoubletFinder uses automatic pK selection, homotypic adjustment, an expected doublet rate of 0.054, pN = 0.25 and PCs 1:30. RNA analysis uses 3,000 highly variable genes, a workflow seed of 1234 and clustering resolution 0.8. QC thresholds and reduction settings are configured in the environment file.
+
+RNA `ScaleData` is run on all retained RNA genes before PCA; the initial RNA PCA uses the selected highly variable genes. No additional HVG-only `ScaleData` is run before DoubletFinder.
 
 For existing matrices, the same downstream entry accepts RNA/ATAC H5 files or Matrix Market directories.
 
 ```bash
-Rscript --vanilla codes/callcell_xingyu.R SAMPLE RNA_MATRIX ATAC_MATRIX FRAGMENTS PET_STATS OUTPUT_DIR mm10
+Rscript --vanilla codes/callcell.R SAMPLE RNA_MATRIX ATAC_MATRIX FRAGMENTS PET_STATS OUTPUT_DIR mm10
 ```
 
 The fragment input requires its `.tbi` index. For hg38, set the corresponding references, `genome=hg38` and `gmac=hs` in the configuration. Downstream R requires the matching EnsDb and BSgenome packages, plus the Seurat, SeuratObject, Signac, DoubletFinder, harmony, dplyr, magrittr, ggplot2, patchwork, stringr, reshape2, matrixStats and data.table packages used by the supplied scripts. Python requires pysam. `bamCoverage` generates the RPKM tracks.

@@ -86,9 +86,9 @@ export filtersmallsize="$tmppath/classPET.py"
 export Sbam2fragment="$tmppath/singletonBam2fragment.xyh.py"
 export CountBarcodePET="$tmppath/CountBarcodePET.py"
 
-export CHAIR_MIN_RNA=${CHAIR_MIN_RNA:-100}
-export CHAIR_MIN_ATAC=${CHAIR_MIN_ATAC:-100}
-export CHAIR_MIN_PET=${CHAIR_MIN_PET:-50}
+export CHAIR_MIN_RNA=${CHAIR_MIN_RNA:-400}
+export CHAIR_MIN_ATAC=${CHAIR_MIN_ATAC:-4000}
+export CHAIR_MIN_PET=${CHAIR_MIN_PET:-300}
 export CHAIR_MAX_MT=${CHAIR_MAX_MT:-20}
 export CHAIR_MAX_RIBO=${CHAIR_MAX_RIBO:-50}
 export CHAIR_DOUBLET_RATE=${CHAIR_DOUBLET_RATE:-0.054}
@@ -1184,7 +1184,7 @@ export CHAIR_MIN_RNA=$CHAIR_MIN_RNA CHAIR_MIN_ATAC=$CHAIR_MIN_ATAC CHAIR_MIN_PET
 export CHAIR_MAX_MT=$CHAIR_MAX_MT CHAIR_MAX_RIBO=$CHAIR_MAX_RIBO CHAIR_DOUBLET_RATE=$CHAIR_DOUBLET_RATE CHAIR_SEED=$CHAIR_SEED
 export CHAIR_RNA_DIMS=$CHAIR_RNA_DIMS CHAIR_ATAC_DIMS=$CHAIR_ATAC_DIMS
 export CHAIR_RNA_RESOLUTION=$CHAIR_RNA_RESOLUTION CHAIR_ATAC_RESOLUTION=$CHAIR_ATAC_RESOLUTION CHAIR_WNN_RESOLUTION=$CHAIR_WNN_RESOLUTION
-$Rcmd --vanilla "$tmppath/callcell_xingyu.R" "$RUN" "$wdir/10xGEX/outs/raw_feature_bc_matrix.h5" "$wdir/10xATAC/outs/raw_peak_bc_matrix.h5" "$wdir/bulkChiatac/${RUN}.fragments.tsv.gz" "$wdir/bulkChiatac/${RUN}.hq.CB.nr.bedpe.stat" "$wdir/CallCell" "$genome"
+$Rcmd --vanilla "$tmppath/callcell.R" "$RUN" "$wdir/10xGEX/outs/raw_feature_bc_matrix.h5" "$wdir/10xATAC/outs/raw_peak_bc_matrix.h5" "$wdir/bulkChiatac/${RUN}.fragments.tsv.gz" "$wdir/bulkChiatac/${RUN}.hq.CB.nr.bedpe.stat" "$wdir/CallCell" "$genome"
 ENDHERE
     jidcells=$(submitjob "$pbs" "$@")
     export jidcells

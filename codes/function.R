@@ -164,8 +164,6 @@ baseals <- function(data, type, findcluster = T, integrate = T) {
 }
 
 finddoublet <- function(data, DoubletRate = 0.054) {
-  # DoubletFinder reuses this ScaleData command when building artificial cells.
-  data <- ScaleData(data, assay = "RNA", features = VariableFeatures(data[["RNA"]]))
   data@reductions$pca <- data@reductions$rnapca
   
   # find the best pk value

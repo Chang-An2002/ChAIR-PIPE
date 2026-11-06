@@ -9,11 +9,11 @@ library(patchwork)
 library(DoubletFinder)
 
 
-# PET barcode selection follows the author's callcell_xingyu.R.
+# RNA, ATAC and PET barcode selection uses the configured QC thresholds.
 # Singlet filtering, RNA/ATAC WNN and plots follow the author's callcell.R/function.R.
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) != 7L) {
-  stop("Usage: Rscript callcell_xingyu.R SAMPLE RNA_MATRIX ATAC_MATRIX FRAGMENTS PET_STATS OUTPUT_DIR GENOME")
+  stop("Usage: Rscript callcell.R SAMPLE RNA_MATRIX ATAC_MATRIX FRAGMENTS PET_STATS OUTPUT_DIR GENOME")
 }
 sampleid <- args[1]
 rna.path <- normalizePath(args[2], mustWork = TRUE)
@@ -32,9 +32,9 @@ setwd(output.path)
 unlink("SUCCESS.txt")
 dir.create("data", showWarnings = FALSE)
 set.seed(as.integer(Sys.getenv("CHAIR_SEED", "1234")))
-min.rna <- as.numeric(Sys.getenv("CHAIR_MIN_RNA", "100"))
-min.atac <- as.numeric(Sys.getenv("CHAIR_MIN_ATAC", "100"))
-min.pet <- as.numeric(Sys.getenv("CHAIR_MIN_PET", "50"))
+min.rna <- as.numeric(Sys.getenv("CHAIR_MIN_RNA", "400"))
+min.atac <- as.numeric(Sys.getenv("CHAIR_MIN_ATAC", "4000"))
+min.pet <- as.numeric(Sys.getenv("CHAIR_MIN_PET", "300"))
 max.mt <- as.numeric(Sys.getenv("CHAIR_MAX_MT", "20"))
 max.ribo <- as.numeric(Sys.getenv("CHAIR_MAX_RIBO", "50"))
 doublet.rate <- as.numeric(Sys.getenv("CHAIR_DOUBLET_RATE", "0.054"))
@@ -61,7 +61,7 @@ pet <- read.table(pet.path, header = TRUE, row.names = 1, sep = "\t", check.name
 required.pet <- c("PET_total", "PET_intra", "PET_inter", "PET_intragt1000")
 if (!all(required.pet %in% colnames(pet))) stop("PET statistics are missing required columns")
 if (anyDuplicated(rownames(pet))) stop("PET statistics contain duplicate barcodes")
-pet.cells <- rownames(pet)[is.finite(pet$PET_intragt1000) & pet$PET_intragt1000 > min.pet]
+pet.cells <- rownames(pet)[is.finite(pet$PET_intragt1000) & pet$PET_intragt1000 >= min.pet]
 cells <- intersect(intersect(colnames(count_rna), colnames(count_atac)), pet.cells)
 if (!length(cells)) stop("No RNA/ATAC/PET shared barcodes pass PET filtering")
 writeLines(cells, "data/shared_barcodes.txt")
@@ -122,7 +122,7 @@ data@meta.data[is.na(data@meta.data)] <- 0
 DefaultAssay(data) <- "RNA"
 saveRDS(data, file = paste0("data/", sampleid, ".all.rds"))
 
-dataflt <- subset(data, subset = nCount_RNA > min.rna & nCount_ATAC > min.atac & percent.mt < max.mt & percent.ribo < max.ribo)
+dataflt <- subset(data, subset = nCount_RNA >= min.rna & nCount_ATAC >= min.atac & percent.mt < max.mt & percent.ribo < max.ribo)
 cat(sprintf("There are %d high quality cell.\n", ncol(dataflt)))
 
 dataflt <- runRNA(dataflt)
