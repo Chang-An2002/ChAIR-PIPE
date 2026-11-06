@@ -137,7 +137,9 @@ The entry point submits ARC barcode assignment, independent RNA counting, CPU DN
 | Fragment intervals and index | `bulkChiatac/<sample>.fragments.tsv.gz` and `.tbi` |
 | PET statistics | `bulkChiatac/<sample>.hq.CB.nr.bedpe.stat` |
 | Final Seurat object | `CallCell/data/<sample>.final.rds` |
-| QC metadata including RNA doublet labels | `CallCell/data/<sample>.metadata.txt` |
+| QC-passed Seurat object, including RNA doublet labels, before doublet removal | `CallCell/data/<sample>.QC.rds` |
+| Complete QC metadata, including pANN, doublet labels, clusters and PET statistics | `CallCell/data/<sample>.metadata.txt` |
+| QC plots before doublet removal | `CallCell/<sample>.raw.count.pdf`, `.raw.RNAcluster.pdf` and `.raw.ATACcluster.pdf` |
 | Recorded analysis input paths | `CallCell/data/input_paths.tsv` |
 
 Fragment export uses the author's `classPET.py` and `bam2fragment.py`: short inward-facing pairs use the paired branch; PET and other alignments use the single-end branch.
@@ -145,6 +147,12 @@ Fragment export uses the author's `classPET.py` and `bam2fragment.py`: short inw
 `codes/callcell.R` intersects RNA, ATAC and PET barcodes and applies `nCount_RNA >= 400`, `nCount_ATAC >= 4000`, `PET_intragt1000 >= 300`, mitochondrial percentage `< 20` and ribosomal percentage `< 50`. RNA object construction uses `min.cells = 5`. The accompanying `codes/function.R` runs RNA/ATAC clustering, RNA DoubletFinder and WNN. DoubletFinder uses automatic pK selection, homotypic adjustment, an expected doublet rate of 0.054, pN = 0.25 and PCs 1:30. RNA analysis uses 3,000 highly variable genes, a workflow seed of 1234 and clustering resolution 0.8. QC thresholds and reduction settings are configured in the environment file.
 
 RNA `ScaleData` is run on all retained RNA genes before PCA; the initial RNA PCA uses the selected highly variable genes. No additional HVG-only `ScaleData` is run before DoubletFinder.
+
+ATAC input keeps standard chromosomes, including chrY when present. The reference ATAC settings remain `FindTopFeatures` cutoff `q0`, LSI dimensions 2:30, the Seurat default neighbor count, and clustering resolution 0.8. Adjust these settings for the dataset in `codes/function.R` and the configuration file.
+
+The PET table includes `PET_total`, `PET_intra`, `PET_inter`, `PET_intrale1000`, `PET_intragt1000`, `PET_intragt8000`, `PET_intragt10000` and `PET_intragt20000`. All PET columns are retained in the objects and QC metadata. `blacklist_fraction` is calculated using the matching Signac mm10 or hg38 blacklist and recorded as a QC metric. It is not an additional cell-filtering threshold.
+
+The QC object and plots contain every QC-passed cell, including RNA-predicted doublets. The ATAC QC plots are colored by the RNA DoubletFinder labels and ATAC clusters. The final object contains RNA singlets after doublet removal.
 
 For existing matrices, the same downstream entry accepts RNA/ATAC H5 files or Matrix Market directories.
 

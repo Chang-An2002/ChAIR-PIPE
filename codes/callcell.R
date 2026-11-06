@@ -55,17 +55,19 @@ read.matrix <- function(path, feature.type) {
 count_rna <- read.matrix(rna.path, "Gene Expression")
 count_atac <- read.matrix(atac.path, "Peaks")
 count_rna <- count_rna[, Matrix::colSums(count_rna) > 0, drop = FALSE]
-count_atac <- count_atac[grepl("^chr[0-9]+:|^chrX:", rownames(count_atac)), , drop = FALSE]
+atac.ranges <- StringToGRanges(rownames(count_atac), sep = c(":", "-"))
+standard.atac <- as.character(seqnames(atac.ranges)) %in% GenomeInfoDb::standardChromosomes(atac.ranges)
+count_atac <- count_atac[standard.atac, , drop = FALSE]
 count_atac <- count_atac[, Matrix::colSums(count_atac) > 0, drop = FALSE]
 pet <- read.table(pet.path, header = TRUE, row.names = 1, sep = "\t", check.names = FALSE)
-required.pet <- c("PET_total", "PET_intra", "PET_inter", "PET_intragt1000")
-if (!all(required.pet %in% colnames(pet))) stop("PET statistics are missing required columns")
+required.pet <- c("PET_total", "PET_intra", "PET_inter", "PET_intrale1000", "PET_intragt1000", "PET_intragt8000", "PET_intragt10000", "PET_intragt20000")
+if (!all(required.pet %in% colnames(pet))) stop("PET statistics are missing required columns: ", paste(setdiff(required.pet, colnames(pet)), collapse = ", "))
 if (anyDuplicated(rownames(pet))) stop("PET statistics contain duplicate barcodes")
 pet.cells <- rownames(pet)[is.finite(pet$PET_intragt1000) & pet$PET_intragt1000 >= min.pet]
 cells <- intersect(intersect(colnames(count_rna), colnames(count_atac)), pet.cells)
 if (!length(cells)) stop("No RNA/ATAC/PET shared barcodes pass PET filtering")
 writeLines(cells, "data/shared_barcodes.txt")
-pet <- pet[cells, required.pet, drop = FALSE]
+pet <- pet[cells, , drop = FALSE]
 cat("RNA barcodes", ncol(count_rna), "ATAC barcodes", ncol(count_atac), "PET-selected shared barcodes", length(cells), "\n")
 
 if (refgenome == "mm10") {
@@ -115,7 +117,11 @@ DefaultAssay(data) <- "ATAC"
 data <- TSSEnrichment(data)
 data <- NucleosomeSignal(data, n = NULL)
 
-data <- AddMetaData(data, metadata = pet[, required.pet, drop = FALSE])
+blacklist.name <- paste0("blacklist_", refgenome)
+utils::data(list = blacklist.name, package = "Signac", envir = environment())
+data$blacklist_fraction <- FractionCountsInRegion(object = data, assay = "ATAC", regions = get(blacklist.name))
+
+data <- AddMetaData(data, metadata = pet)
 
 data@meta.data[is.na(data@meta.data)] <- 0
 
@@ -125,13 +131,40 @@ saveRDS(data, file = paste0("data/", sampleid, ".all.rds"))
 dataflt <- subset(data, subset = nCount_RNA >= min.rna & nCount_ATAC >= min.atac & percent.mt < max.mt & percent.ribo < max.ribo)
 cat(sprintf("There are %d high quality cell.\n", ncol(dataflt)))
 
+# QC plots use all QC-passed cells before doublet removal.
+qc.features <- c("nCount_RNA", "nFeature_RNA", "percent.mt", "percent.ribo", "nCount_ATAC", "nFeature_ATAC", "TSS.enrichment", "PET_total", "PET_inter", "PET_intragt1000")
+pdf(paste0(sampleid, ".raw.count.pdf"), width = 15, height = 9)
+print(VlnPlot(dataflt, features = qc.features, pt.size = 0, ncol = 4))
+print(VlnPlot(dataflt, features = qc.features, pt.size = 0, ncol = 4, log = TRUE))
+p1 <- FeatureScatter(dataflt, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+p2 <- FeatureScatter(dataflt, feature1 = "nCount_RNA", feature2 = "percent.mt")
+p3 <- FeatureScatter(dataflt, feature1 = "nCount_RNA", feature2 = "nCount_ATAC")
+p4 <- FeatureScatter(dataflt, feature1 = "nCount_RNA", feature2 = "PET_intragt1000")
+print(p1 + p2 + p3 + p4)
+dev.off()
+
 dataflt <- runRNA(dataflt)
 dataflt <- runATAC(dataflt)
 
 ##### Remove doublet cells #####
 dataflt <- finddoublet(dataflt, DoubletRate = doublet.rate)
 
+saveRDS(dataflt, file = paste0("data/", sampleid, ".QC.rds"))
+metadata <- as.data.frame(dataflt@meta.data) %>% dplyr::mutate(cell = rownames(.))
+metadata <- metadata[, c("cell", setdiff(colnames(metadata), "cell")), drop = FALSE]
+write.table(metadata, file = paste0("data/", sampleid, ".metadata.txt"), quote = FALSE, sep = "\t", row.names = FALSE)
+
 cluster_theme <- theme(axis.text = element_blank(), axis.ticks = element_blank())
+
+pdf(paste0(sampleid, ".raw.RNAcluster.pdf"), width = 15)
+print(DimPlot(dataflt, reduction = "rnatsne", group.by = c("RNADF.class", rna.cluster), label = TRUE, label.size = 5, repel = TRUE))
+print(DimPlot(dataflt, reduction = "rnaumap", group.by = c("RNADF.class", rna.cluster), label = TRUE, label.size = 5, repel = TRUE))
+dev.off()
+
+pdf(paste0(sampleid, ".raw.ATACcluster.pdf"), width = 15)
+print(DimPlot(dataflt, reduction = "atactsne", group.by = c("RNADF.class", atac.cluster), label = TRUE, label.size = 5, repel = TRUE))
+print(DimPlot(dataflt, reduction = "atacumap", group.by = c("RNADF.class", atac.cluster), label = TRUE, label.size = 5, repel = TRUE))
+dev.off()
 
 pdf(paste0(sampleid, ".doublet.pdf"), width = 13)
 p1 <- DimPlot(object = dataflt, reduction = "rnaumap", group.by = "RNADF.class", label = T, label.size = 5) + 
@@ -146,10 +179,6 @@ p2 <- DimPlot(object = dataflt, reduction = "rnatsne", group.by = "RNADF.class",
   cluster_theme
 print(p1 + p2)
 dev.off()
-
-metadata <- as.data.frame(dataflt@meta.data) %>% dplyr::mutate(cell = rownames(.))
-metadata <- metadata[, c("cell", "nCount_RNA", "nFeature_RNA", "nCount_ATAC", "nFeature_ATAC", "PET_total", "PET_inter", "PET_intragt1000", "RNADF.class", "percent.mt", "percent.ribo", "TSS.enrichment", "TSS.percentile", "nucleosome_signal", "nucleosome_percentile")]
-write.table(metadata, file = paste0("data/", sampleid, ".metadata.txt"), quote = F, sep = "\t", row.names = F)
 
 dataflt <- subset(dataflt, subset = RNADF.class == "Singlet")
 cat(sprintf("There are %d singlet cell.\n", ncol(dataflt)))
