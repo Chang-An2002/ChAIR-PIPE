@@ -131,11 +131,46 @@ saveRDS(data, file = paste0("data/", sampleid, ".all.rds"))
 dataflt <- subset(data, subset = nCount_RNA >= min.rna & nCount_ATAC >= min.atac & percent.mt < max.mt & percent.ribo < max.ribo)
 cat(sprintf("There are %d high quality cell.\n", ncol(dataflt)))
 
+# Violin styling follows the author's original final.count.origident plot.
+plotQCViolin <- function(object, features, group.by = "orig.ident", ncol = 2, log = FALSE) {
+  metadata <- object[[]]
+  values <- metadata[[group.by]]
+  groups <- if (is.factor(values)) droplevels(values) else factor(values)
+  label.size <- if (nlevels(groups) > 4) 2 else 3
+  plots <- lapply(features, function(feature) {
+    plotdata <- data.frame(group = groups, value = metadata[[feature]])
+    ymax <- max(plotdata$value)
+    label.y <- function(fraction) if (log) expm1(log1p(ymax) * fraction) else ymax * fraction
+    summary <- do.call(rbind, lapply(split(plotdata$value, plotdata$group), function(x) {
+      value <- median(x)
+      formatted <- if (all(x %% 1 == 0)) value else signif(value, 3)
+      data.frame(mean = mean(x), median.label = paste("M=", formatted), count.label = paste("N=", length(x)))
+    }))
+    summary$group <- factor(rownames(summary), levels = levels(groups))
+    summary$median.y <- label.y(0.9)
+    summary$count.y <- label.y(0.8)
+    p <- ggplot(plotdata, aes(x = group, y = value)) +
+      geom_violin(aes(fill = group)) +
+      geom_boxplot(width = 0.05, fill = "white", outlier.shape = NA) +
+      geom_point(data = summary, aes(x = group, y = mean), inherit.aes = FALSE, shape = 8, size = 2.5, color = "black") +
+      geom_text(data = summary, aes(x = group, y = median.y, label = median.label), inherit.aes = FALSE, size = label.size) +
+      geom_text(data = summary, aes(x = group, y = count.y, label = count.label), inherit.aes = FALSE, size = label.size) +
+      labs(title = "", x = "", y = feature) +
+      theme_bw() +
+      theme(plot.title = element_text(hjust = 0.5), legend.position = "none",
+            panel.grid = element_blank(), axis.text = element_text(colour = "black"))
+    if (nlevels(groups) > 4) p <- p + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+    if (log) p <- p + scale_y_continuous(trans = "log1p") + labs(subtitle = "log(1 + value) scale")
+    p
+  })
+  patchwork::wrap_plots(plots, ncol = ncol)
+}
+
 # QC plots use all QC-passed cells before doublet removal.
 qc.features <- c("nCount_RNA", "nFeature_RNA", "percent.mt", "percent.ribo", "nCount_ATAC", "nFeature_ATAC", "TSS.enrichment", "PET_total", "PET_inter", "PET_intragt1000")
-pdf(paste0(sampleid, ".raw.count.pdf"), width = 15, height = 9)
-print(VlnPlot(dataflt, features = qc.features, pt.size = 0, ncol = 4))
-print(VlnPlot(dataflt, features = qc.features, pt.size = 0, ncol = 4, log = TRUE))
+pdf(paste0(sampleid, ".raw.count.pdf"), width = 15, height = 12)
+print(plotQCViolin(dataflt, features = qc.features, ncol = 4))
+print(plotQCViolin(dataflt, features = qc.features, ncol = 4, log = TRUE))
 p1 <- FeatureScatter(dataflt, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
 p2 <- FeatureScatter(dataflt, feature1 = "nCount_RNA", feature2 = "percent.mt")
 p3 <- FeatureScatter(dataflt, feature1 = "nCount_RNA", feature2 = "nCount_ATAC")
@@ -234,17 +269,17 @@ print(p1 + p3 + p5 + p2 + p4)
 dev.off()
 
 stat_features <- c("nCount_RNA", "nFeature_RNA", "nCount_ATAC", "nFeature_ATAC", "percent.mt", "percent.ribo")
-pdf(paste0(sampleid, ".final.count.pre.origident.pdf"), width = 6)
-p <- VlnPlot(dataflt, features = stat_features, group.by = "orig.ident", pt.size = 0, ncol = 2)
+pdf(paste0(sampleid, ".final.count.pre.origident.pdf"), width = 8, height = 12)
+p <- plotQCViolin(dataflt, features = stat_features, ncol = 2)
 print(p)
-p <- VlnPlot(dataflt, features = stat_features, group.by = "orig.ident", pt.size = 0, ncol = 2, log = T)
+p <- plotQCViolin(dataflt, features = stat_features, ncol = 2, log = TRUE)
 print(p)
 dev.off()
 
-pdf(paste0(sampleid, ".final.count.rnacluster.pdf"), width = 10)
-p <- VlnPlot(dataflt, features = stat_features, group.by = rna.cluster, pt.size = 0, ncol = 3)
+pdf(paste0(sampleid, ".final.count.rnacluster.pdf"), width = 24, height = 10)
+p <- plotQCViolin(dataflt, features = stat_features, group.by = rna.cluster, ncol = 3)
 print(p)
-p <- VlnPlot(dataflt, features = stat_features, group.by = rna.cluster, pt.size = 0, ncol = 3, log = T)
+p <- plotQCViolin(dataflt, features = stat_features, group.by = rna.cluster, ncol = 3, log = TRUE)
 print(p)
 dev.off()
 
