@@ -314,7 +314,9 @@ marker2 <- marker2[order(-marker2$avg_log2FC, -marker2$pct.1), ] %>%
 mytheme <- theme(legend.position = "none",
                  axis.text = element_text(colour = "black"))
 
-dataflt <- ScaleData(dataflt)
+# Scale the selected heatmap markers together with the variable genes.
+heatmap.features <- unique(c(VariableFeatures(dataflt), marker1$gene, marker2$gene))
+dataflt <- ScaleData(dataflt, features = heatmap.features)
 pdf(paste0(sampleid, ".degene.heatmap.rnacluster1.pdf"), height = 10, width = 14)
 DoHeatmap(object = dataflt, features = marker1$gene, group.by = rna.cluster) + mytheme
 dev.off()

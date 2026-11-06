@@ -68,7 +68,7 @@ IIA -- cellranger-atac --> JJ
 Use Linux with SLURM, Singularity/Apptainer and Conda or Mamba.
 
 ```bash
-git clone -b protocol-revision-20261105 https://github.com/Chang-An2002/ChAIR-PIPE.git
+git clone https://github.com/Chang-An2002/ChAIR-PIPE.git
 cd ChAIR-PIPE
 mkdir -p singularity
 singularity build singularity/scMAV.sif docker://fengchuiguo1994/scmav:v1
@@ -96,6 +96,8 @@ conda run --no-capture-output -n chair-r Rscript config/install_r_packages.R mm1
 # For human data, use hg38 as the last argument.
 ```
 
+A CRAN mirror can be selected with the `CHAIR_CRAN_MIRROR` environment variable.
+
 The recommended software versions for downstream analysis are Seurat 5.3.0, R ≥ 4.1.0, Matrix ≥ 1.6-4, SeuratObject ≥ 5.0.2, Signac ≥ 1.12.0 and DoubletFinder 2.0.4. Python input preparation uses pysam and bx-python.
 
 ## Reference files
@@ -116,6 +118,29 @@ singularity exec /absolute/path/to/scMAV.sif bwa index \
 ```
 
 For mm10, select the mm10 GEX/ARC references and mm10 blacklist. Set `fasta` to the indexed genome FASTA. Genome assembly and chromosome names must match across these inputs.
+
+## Prepare FASTQ inputs (protocol steps 155–156)
+
+Start with demultiplexed lane-level FASTQ files from the PET, ATAC and RNA libraries of the same sample. Check that each DNA lane has R1/R2/R3 and each RNA lane has R1/R2. DNA R1/R3 contain genomic reads and R2 contains the barcode. Put the files under `INPATH/PETSAMPLEID/`, `INPATH/ATACSAMPLEID/` and `INPATH/RNASAMPLEID/`; subdirectories are also searched. Both `*_R1.fastq.gz` and `*_R1_001.fastq.gz` names, with matching R2/R3 names, are supported.
+
+Run the protocol's merge command after setting the input root and the sample's output directory:
+
+```bash
+export INPATH=/data/raw_fastq
+export OUTPATH=/data/merged/SAMPLEID
+bash codes/merge_fastq.sh PETSAMPLEID,ATACSAMPLEID,RNASAMPLEID,SAMPLEID
+```
+
+The script combines PET and ATAC reads across lanes into DNA R1/R2/R3, separately combines RNA reads, and truncates RNA R1 sequence and quality to 28 bp and RNA R2 sequence and quality to 90 bp. It creates `OUTPATH` if needed and requires that its five output FASTQ filenames do not already exist. The output prefixes are `$OUTPATH/SAMPLEID` for DNA and `$OUTPATH/SAMPLEID_GTAACATGCG-AGGTAACACT` for RNA; the shared sample identifier links these two libraries in the input list.
+
+Create the two-column `xxx.fastqlist` described in the protocol. Each row contains the absolute merged DNA FASTQ prefix first and the matched RNA FASTQ prefix second, separated by whitespace (a tab is recommended), with no header. The prefix ends before `_S..._L..._R...` and does not include `.fastq.gz`:
+
+```bash
+printf '%s\t%s\n' "$OUTPATH/SAMPLEID" "$OUTPATH/SAMPLEID_GTAACATGCG-AGGTAACACT" > xxx.fastqlist
+```
+
+For multiple samples, add one matched DNA/RNA pair per row. The merge script does not create this list, and the main submission script does not invoke the merge script. If the FASTQ files have already been merged and prepared, such as the K562 download below, use their existing prefixes directly in `xxx.fastqlist` and skip merging.
+
 
 ## Configure a run
 
@@ -140,17 +165,15 @@ Edit `config/my_run.env`:
 | Thread and memory settings | Resources available on your cluster |
 | `addLinkerSeq` | DNA linker; the supplied K562/ChAIR example uses `-A ATAGGCGCTGGTTGCGTTGT` |
 
-Create `samples.tsv` with one DNA prefix and one RNA prefix per row, separated by a tab. Use absolute paths ending before `_S..._L..._R...`. DNA R1/R3 contain genomic reads and R2 contains the barcode.
-
-```text
-/data/fastq/SCG0074-15872_SI-NA-D6	/data/fastq/SCG0081-15878_GTAACATGCG-AGGTAACACT
-```
+Use the two-column `xxx.fastqlist` prepared above as the pipeline input list.
 
 ## Run the analysis
 
 ```bash
-bash submit_cpu10x_for_scChiatac.mm10.nobl.sh samples.tsv config/my_run.env
+bash submit_cpu10x_for_scChiatac.mm10.nobl.sh xxx.fastqlist config/my_run.env
 ```
+
+The second argument supplies the run configuration. For the protocol's one-argument command, export `CHAIR_CONFIG=/absolute/path/to/ChAIR-PIPE/config/my_run.env` and omit the second argument.
 
 The entry submits ARC barcode assignment, RNA counting, DNA alignment and deduplication, fragment/peak generation, ATAC reanalysis, PET statistics and downstream R analysis with SLURM success dependencies. Job scripts and logs are in `OUTPUT_DIR/<sample>/slurm/`.
 
@@ -199,11 +222,11 @@ The script exports RNA intervals using the author's alignment exporter, selects 
 | `genes.bed` | Eight-column gene/transcript annotation |
 | RPKM paths in `inputs.tsv` | `<sample>.GEX.RPKM.bedgraph` and `bulkChiatac/<sample>.ATAC.RPKM.bedgraph.gz` |
 
-Then follow [ChAIR-Viewer](https://github.com/Chang-An2002/ChAIR-Viewer/tree/protocol-revision-20261105) to load `inputs.tsv` and plot a region.
+Then follow [ChAIR-Viewer](https://github.com/Chang-An2002/ChAIR-Viewer/tree/main) to load `inputs.tsv` and plot a region.
 
 ## K562 FASTQ download and filenames
 
-Run the following commands in your FASTQ directory, then use the K562 prefixes in `samples.tsv` and the hg38 settings described above.
+Run the following commands in your FASTQ directory, then use the K562 prefixes in `xxx.fastqlist` and the hg38 settings described above. These files are already prepared DNA/RNA inputs; skip `merge_fastq.sh` for this example.
 
 ```bash
 wget https://download.cncb.ac.cn/gsa-human/HRA007068/HRR1686121/HRR1686121.tar.gz # DNA
