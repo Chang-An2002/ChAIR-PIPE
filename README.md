@@ -72,15 +72,19 @@ git clone -b protocol-revision-20261105 https://github.com/Chang-An2002/ChAIR-PI
 cd ChAIR-PIPE
 mkdir -p singularity
 singularity build singularity/scMAV.sif docker://fengchuiguo1994/scmav:v1
+wget -O singularity/juicer_tools_1.22.01.jar https://s3.amazonaws.com/hicfiles.tc4ga.com/public/juicer/juicer_tools_1.22.01.jar
+echo '5bd863e1fbc4573de09469e0adc5ab586e2b75b14dd718465e14dc299d7243a0  singularity/juicer_tools_1.22.01.jar' | sha256sum -c -
 ```
 
-The upstream tools are selected through command prefixes in the configuration. To inspect the container commands:
+Keep `juicer_tools_1.22.01.jar` beside `scMAV.sif`. The configuration loads Juicer Tools 1.22.01 from this file using the Java runtime in the image. The upstream tools are selected through command prefixes in the configuration. To inspect the supplied tools:
 
 ```bash
 singularity exec singularity/scMAV.sif cellranger --version
 singularity exec singularity/scMAV.sif cpu
 singularity exec singularity/scMAV.sif gatk --version
-singularity exec singularity/scMAV.sif juicer_tools -h
+singularity exec \
+  --bind "$PWD/singularity/juicer_tools_1.22.01.jar:/opt/software/juicer_tools.1.8.9_jcuda.0.8.jar:ro" \
+  singularity/scMAV.sif juicer_tools -V
 ```
 
 Prepare the R environment for downstream analysis and Viewer plotting:
