@@ -96,7 +96,18 @@ conda run --no-capture-output -n chair-r Rscript config/install_r_packages.R mm1
 # For human data, use hg38 as the last argument.
 ```
 
-The R analysis was tested with R 4.4.1, Matrix 1.7-3, Seurat 5.3.0, SeuratObject 5.1.0, Signac 1.14.0 and DoubletFinder 2.0.4. Python input preparation uses pysam and bx-python.
+Recommended software versions for downstream analysis:
+
+| Software | Recommended version |
+| --- | --- |
+| Seurat | 5.3.0 |
+| R | ≥ 4.1.0 |
+| Matrix | ≥ 1.6-4 |
+| SeuratObject | ≥ 5.0.2 |
+| Signac | ≥ 1.12.0 |
+| DoubletFinder | 2.0.4 (Seurat v5 compatible) |
+
+Python input preparation uses pysam and bx-python.
 
 ## Reference files
 
