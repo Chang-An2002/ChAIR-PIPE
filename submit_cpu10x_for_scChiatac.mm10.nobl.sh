@@ -705,7 +705,7 @@ if [ '$LABEL' == '$pairlabel' ]; then
     # $samcmd sort -n -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam | $samcmd view -h | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.shifted.bedpe  # xyh
     $samcmd view -h ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.pet.bam | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe
 
-    awk 'BEGIN{OFS="\t"}{if ($9 == "+") { $2 += 4 } else if ($9 == "-") { $3 -= 5 } if ($10 == "+") { $5 += 4 } else if ($10 == "-") { $6 -= 5 } print}' ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe > ${RUN}.${pairlabel}.UU.F2048.CB.nr.shifted.bedpe
+    awk 'BEGIN{OFS="\t"}{if (\$9 == "+") { \$2 += 4 } else if (\$9 == "-") { \$3 -= 5 } if (\$10 == "+") { \$5 += 4 } else if (\$10 == "-") { \$6 -= 5 } print}' ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe > ${RUN}.${pairlabel}.UU.F2048.CB.nr.shifted.bedpe
 
     echo "Get CB in the $UxxUbam"
     date

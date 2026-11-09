@@ -32,7 +32,9 @@ cp "$peaks" "$viewer_dir/ATAC.peaks.bed"
 
 # The same barcode/name separation is used by the pipeline PET-statistics stage.
 shopt -s nullglob
-pet_files=("$sample_dir/bulkChiatac/$sample.singlelinker.paired.UU.F2048.CB.nr.bedpe.gz" "$sample_dir/bulkChiatac/$sample.none.UU.F2048.CB.nr.bedpe.gz")
+paired_pet="$sample_dir/bulkChiatac/$sample.singlelinker.paired.UU.F2048.CB.nr.shifted.bedpe.gz"
+[[ -s "$paired_pet" ]] || paired_pet="$sample_dir/bulkChiatac/$sample.singlelinker.paired.UU.F2048.CB.nr.bedpe.gz"
+pet_files=("$paired_pet" "$sample_dir/bulkChiatac/$sample.none.UU.F2048.CB.nr.bedpe.gz")
 for path in "${pet_files[@]}"; do [[ -s "$path" ]] || { echo "Missing PET input: $path" >&2; exit 1; }; done
 gzip -cd "${pet_files[@]}" | \
     perl -lane '@tmp=split(/:/,$F[6],2); print join("\t",@F[0..5],@tmp,@F[7..9])' | \
