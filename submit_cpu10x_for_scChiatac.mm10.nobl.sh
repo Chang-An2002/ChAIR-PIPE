@@ -700,10 +700,12 @@ if [ '$LABEL' == '$pairlabel' ]; then
     $python "$filtersmallsize" ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted
     $samcmd view -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.bam | $python "$statpy_bamTag"  > ${RUN}.${pairlabel}.UU.F2048.CB.nrPET.tsv
 
-    echo "Generating interaction ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe"
+    echo "Generating interaction ${RUN}.${pairlabel}.UU.F2048.CB.nr.shifted.bedpe"
     date
-    # $samcmd sort -n -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam | $samcmd view -h | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe  # xyh
+    # $samcmd sort -n -@ $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.bam | $samcmd view -h | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.shifted.bedpe  # xyh
     $samcmd view -h ${RUN}.${pairlabel}.UU.F2048.CB.nr.nsorted.pet.bam | perl "$injectCBreadID" | $bedcmd  bamtobed -bedpe |sort -k7,7 > ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe
+
+    awk 'BEGIN{OFS="\t"}{if ($9 == "+") { $2 += 4 } else if ($9 == "-") { $3 -= 5 } if ($10 == "+") { $5 += 4 } else if ($10 == "-") { $6 -= 5 } print}' ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe > ${RUN}.${pairlabel}.UU.F2048.CB.nr.shifted.bedpe
 
     echo "Get CB in the $UxxUbam"
     date
@@ -716,7 +718,7 @@ if [ '$LABEL' == '$pairlabel' ]; then
     $samcmd view ${RUN}.${LABEL}.UxxU.F2048.CB.nr.bam | $python "$statpy_noTag" $pkl  > ${RUN}.${LABEL}.UxxU.F2048.CB.nr.tsv 
 
     $pigz -p $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.sam
-    $pigz -p $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe
+    $pigz -p $cbNthread ${RUN}.${pairlabel}.UU.F2048.CB.nr.shifted.bedpe
     echo "Interaction CB:"
     ls -ltr *bedpe*
 fi
@@ -1135,7 +1137,7 @@ function preparePETStats {
 set -eo pipefail
 cd "$cpudir"
 # Reuse the barcode/name separation and PET counter from the author workflow.
-zcat ${RUN}.${pairlabel}.UU.F2048.CB.nr.bedpe.gz ${RUN}.${nonelabel}.UU.F2048.CB.nr.bedpe.gz | \
+zcat ${RUN}.${pairlabel}.UU.F2048.CB.nr.shifted.bedpe.gz ${RUN}.${nonelabel}.UU.F2048.CB.nr.bedpe.gz | \
     perl -lane '@tmp=split(/:/,\$F[6],2); print join("\t",@F[0..5],@tmp,@F[7..9])' | \
     $python "$CountBarcodePET" /dev/stdin ${RUN}.hq.CB.nr.bedpe.stat
 ENDHERE
