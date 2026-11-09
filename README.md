@@ -63,7 +63,6 @@ II -- cellranger-atac --> JJ[scATAC matrix]
 IIA -- cellranger-atac --> JJ
 ```
 
-Blacklist filtering for ATAC outputs is applied after merging the DNA branches shown above. PET BEDPE for per-cell statistics and visualization is exported before this merge. CPU/ChiaSig loop candidates undergo a separate blacklist filter.
 
 ## Installation
 
