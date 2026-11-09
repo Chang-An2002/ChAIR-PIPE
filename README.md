@@ -18,31 +18,31 @@ EE -- cpu pair --> EB[singlelinker.paired UxxU bam file]
 FF -- cpu pair --> FA[singlelinker.single UxxU bam file]
 GG -- cpu pair --> GA[none UU bam file]
 GG -- cpu pair --> GB[none UxxU bam file]
-EA -- bedtools/samtools --> EH[singlelinker.paired UU rmblacklist q? bam file]
-EB -- bedtools/samtools --> EI[singlelinker.paired UxxU rmblacklist q? bam file]
-FA -- bedtools/samtools --> FH[singlelinker.single UxxU rmblacklist q? bam file]
-GA -- bedtools/samtools --> GH[none UU rmblacklist q? bam file]
-GB -- bedtools/samtools --> GI[none UxxU rmblacklist q? bam file]
+EA -- bedtools/samtools --> EH[singlelinker.paired UU bam file]
+EB -- bedtools/samtools --> EI[singlelinker.paired UxxU bam file]
+FA -- bedtools/samtools --> FH[singlelinker.single UxxU bam file]
+GA -- bedtools/samtools --> GH[none UU bam file]
+GB -- bedtools/samtools --> GI[none UxxU bam file]
 
-EH --> AEH[singlelinker.paired UU rmblacklist q? barcode bam file]
-EI --> AEI[singlelinker.paired UxxU rmblacklist q? barcode bam file]
-FH --> AFH[singlelinker.single UxxU rmblacklist q? barcode bam file]
-GH --> AGH[none UU rmblacklist q? barcode bam file]
-GI --> AGI[none UxxU rmblacklist q? barcode bam file]
+EH --> AEH[singlelinker.paired UU barcode bam file]
+EI --> AEI[singlelinker.paired UxxU barcode bam file]
+FH --> AFH[singlelinker.single UxxU barcode bam file]
+GH --> AGH[none UU barcode bam file]
+GI --> AGI[none UxxU barcode bam file]
 DD --> AEH
 DD --> AEI
 DD --> AFH
 DD --> AGH
 DD --> AGI
 
-AEH -- picard --> HA[singlelinker.paired UU rmblacklist q? barcode dup bam file]
-AEI -- picard --> HB[singlelinker.paired UxxU rmblacklist q? barcode dup bam file]
-AFH -- picard --> HC[singlelinker.single UxxU rmblacklist q? barcode dup bam file]
-AGH -- picard --> HD[none UU rmblacklist q? barcode dup bam file]
-AGI -- picard --> HE[none UxxU rmblacklist q? barcode dup bam file]
+AEH -- picard --> HA[singlelinker.paired UU barcode dup bam file]
+AEI -- picard --> HB[singlelinker.paired UxxU barcode dup bam file]
+AFH -- picard --> HC[singlelinker.single UxxU barcode dup bam file]
+AGH -- picard --> HD[none UU barcode dup bam file]
+AGI -- picard --> HE[none UxxU barcode dup bam file]
 
 HD --> HF{distance > 1000}
-HF -- yes --> HG[none UU rmblacklist q? barcode dup gt1k bam file]
+HF -- yes --> HG[none UU barcode dup gt1k bam file]
 HF -- no --> HH{fr?}
 HH -- yes --> HI[perfect ATAC signal]
 HH -- no --> HJ[others]
@@ -51,7 +51,7 @@ HA --> KK[scPET bam]
 HG --> KK
 KK -- custom script --> LL[scPET per-cell statistics]
 
-HA --> II[scATAC bam]
+HA --> II[merged DNA BAM after blacklist filtering]
 HB --> II
 HC --> II
 HG --> II
@@ -126,6 +126,7 @@ Start with demultiplexed lane-level FASTQ files from the PET, ATAC and RNA libra
 Run the protocol's merge command after setting the input root and the sample's output directory:
 
 ```bash
+cd /absolute/path/to/ChAIR-PIPE
 export INPATH=/data/raw_fastq
 export OUTPATH=/data/merged/SAMPLEID
 bash codes/merge_fastq.sh PETSAMPLEID,ATACSAMPLEID,RNASAMPLEID,SAMPLEID
