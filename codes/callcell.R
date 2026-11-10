@@ -184,6 +184,131 @@ dataflt <- runATAC(dataflt)
 ##### Remove doublet cells #####
 dataflt <- finddoublet(dataflt, DoubletRate = doublet.rate)
 
+# # OPTIONAL RNA+ATAC FILTERING: disabled by default.
+# # ENABLE: remove one outer "# " layer from this optional block, then switch
+# # the Singlet subset below from RNADF.class to RNA_ATAC_joint_class.
+# # DISABLE: restore the RNADF.class subset and comment this block again.
+# # Use exactly one Singlet subset; do not apply RNA-only and RNA+ATAC joint filters in sequence.
+# # The subset switch belongs below, before "Cluster using singlet cells".
+ 
+# # Optional RNA+ATAC doublet classification; run before Singlet subsetting.
+# # RNA: native scDblFinder defaults (nfeatures=1352 in tested version1.20.2).
+# # ATAC aggregation: https://www.bioconductor.org/packages/devel/bioc/vignettes/scDblFinder/inst/doc/scATAC.html
+# chair_joint_doublets <- function(object, expected_rate, seed=1234L, cutoff=0.5) {
+#   stopifnot(length(expected_rate)==1L, is.finite(expected_rate),
+#             expected_rate>0, expected_rate<1,
+#             length(cutoff)==1L, is.finite(cutoff), cutoff>0, cutoff<1,
+#             length(seed)==1L, is.finite(seed), seed==as.integer(seed))
+#   # Restore the caller's random state, including on errors.
+#   old_kind <- RNGkind()
+#   had_seed <- exists('.Random.seed', envir=.GlobalEnv, inherits=FALSE)
+#   if (had_seed) old_seed <- get('.Random.seed', envir=.GlobalEnv)
+#   on.exit({
+#     do.call(RNGkind, as.list(old_kind))
+#     if (had_seed) assign('.Random.seed', old_seed, envir=.GlobalEnv)
+#     else if (exists('.Random.seed', envir=.GlobalEnv, inherits=FALSE))
+#       rm('.Random.seed', envir=.GlobalEnv)
+#   }, add=TRUE)
+#   for (pkg in c('scDblFinder','SingleCellExperiment','SummarizedExperiment',
+#                 'BiocParallel','SeuratObject')) {
+#     if (!requireNamespace(pkg, quietly=TRUE)) stop('Optional package required: ', pkg)
+#   }
+#   get_counts <- function(assay_name) {
+#     assay <- object[[assay_name]]
+#     if (is.null(assay)) stop('Required assay is missing: ', assay_name)
+#     if (inherits(assay,'Assay5')) {
+#       layers <- SeuratObject::Layers(assay, search='^counts($|[.])')
+#       if (length(layers)!=1L)
+#         stop('One joined counts layer is required in assay: ', assay_name)
+#       return(SeuratObject::LayerData(assay, layer=layers))
+#     }
+#     SeuratObject::GetAssayData(object, assay=assay_name, slot='counts')
+#   }
+#   cells <- colnames(object)
+#   rna <- get_counts('RNA'); atac <- get_counts('ATAC')
+#   stopifnot(length(cells)>0L, !anyDuplicated(cells),
+#             all(cells %in% colnames(rna)), all(cells %in% colnames(atac)))
+#   rna <- rna[,cells,drop=FALSE]; atac <- atac[,cells,drop=FALSE]
+#   set.seed(seed)
+#   sr <- scDblFinder::scDblFinder(
+#     SingleCellExperiment::SingleCellExperiment(assays=list(counts=rna)),
+#     dbr=expected_rate, BPPARAM=BiocParallel::SerialParam(RNGseed=seed))
+#   set.seed(seed)
+#   sa <- scDblFinder::scDblFinder(
+#     SingleCellExperiment::SingleCellExperiment(assays=list(counts=atac)),
+#     aggregateFeatures=TRUE, nfeatures=25, processing='normFeatures',
+#     dbr=expected_rate, BPPARAM=BiocParallel::SerialParam(RNGseed=seed))
+#   stopifnot(identical(colnames(sr),cells), identical(colnames(sa),cells))
+#   rs <- as.numeric(SummarizedExperiment::colData(sr)$scDblFinder.score)
+#   ats <- as.numeric(SummarizedExperiment::colData(sa)$scDblFinder.score)
+#   stopifnot(all(is.finite(rs)), all(is.finite(ats)),
+#             all(rs>=0 & rs<=1), all(ats>=0 & ats<=1))
+#   # Same0.001 floor as the scATAC vignette. Score complements are not null-calibrated p-values.
+#   ur <- pmax(1-rs,0.001); ua <- pmax(1-ats,0.001)
+#   statistic <- -2*(log(ur)+log(ua))
+#   tail_proxy <- stats::pchisq(statistic,df=4,lower.tail=FALSE)
+#   joint_score <- 1-tail_proxy
+#   result <- data.frame(
+#     barcode=cells, RNA_scDblFinder_score=rs, ATAC_scDblFinder_score=ats,
+#     RNA_scDblFinder_class=as.character(SummarizedExperiment::colData(sr)$scDblFinder.class),
+#     ATAC_scDblFinder_class=as.character(SummarizedExperiment::colData(sa)$scDblFinder.class),
+#     joint_Fisher_statistic=statistic, joint_tail_proxy=tail_proxy,
+#     joint_score=joint_score,
+#     joint_class=ifelse(joint_score>cutoff,'Doublet','Singlet'),
+#     row.names=NULL)
+#   md <- object[[]]
+#   if ('RNADF.class' %in% colnames(md)) result$RNA_DoubletFinder_class <- md[cells,'RNADF.class']
+#   if ('RNApANN' %in% colnames(md)) result$RNA_DoubletFinder_pANN <- md[cells,'RNApANN']
+#   attr(result,'parameters') <- list(
+#     R=as.character(getRversion()),
+#     versions=setNames(lapply(c('SeuratObject','scDblFinder','SingleCellExperiment','BiocParallel'),
+#                              function(p) as.character(utils::packageVersion(p))),
+#                       c('SeuratObject','scDblFinder','SingleCellExperiment','BiocParallel')),
+#     RNA_nfeatures_default=eval(formals(scDblFinder::scDblFinder)$nfeatures),
+#     ATAC_aggregateFeatures=TRUE, ATAC_nfeatures=25, ATAC_processing='normFeatures',
+#     dbr=expected_rate, seed=seed, epsilon=0.001, cutoff=cutoff,
+#     rule='joint_score > cutoff: Doublet; otherwise: Singlet',
+#     inference='Heuristic classification, not significance/FDR/posterior probability')
+#   result
+# }
+# 
+# chair_write_joint_calls <- function(result, prefix) {
+#   stopifnot(!anyDuplicated(result$barcode),
+#             all(result$joint_class %in% c('Singlet','Doublet')))
+#   dir.create(dirname(prefix),recursive=TRUE,showWarnings=FALSE)
+#   write.table(result,paste0(prefix,'.RNA_ATAC.joint_calls.tsv'),
+#               sep='\t',quote=FALSE,row.names=FALSE)
+#   writeLines(result$barcode[result$joint_class=='Singlet'],
+#              paste0(prefix,'.RNA_ATAC.singlets.txt'))
+#   writeLines(result$barcode[result$joint_class=='Doublet'],
+#              paste0(prefix,'.RNA_ATAC.doublets.txt'))
+#   summary <- data.frame(cells=nrow(result),
+#     RNA_doublets=sum(result$RNA_scDblFinder_class=='doublet'),
+#     ATAC_doublets=sum(result$ATAC_scDblFinder_class=='doublet'),
+#     shared_doublets=sum(result$RNA_scDblFinder_class=='doublet' &
+#                        result$ATAC_scDblFinder_class=='doublet'),
+#     joint_doublets=sum(result$joint_class=='Doublet'),
+#     joint_singlets=sum(result$joint_class=='Singlet'),
+#     cutoff=attr(result,'parameters')$cutoff)
+#   write.table(summary,paste0(prefix,'.RNA_ATAC.summary.tsv'),
+#               sep='\t',quote=FALSE,row.names=FALSE)
+#   dput(attr(result,'parameters'),file=paste0(prefix,'.RNA_ATAC.parameters.R'))
+#   print(summary)
+#   invisible(summary)
+# }
+# 
+# # On the QC-passed object, after finddoublet() and before any Singlet subset.
+# optional_joint_results <- chair_joint_doublets(
+#   dataflt, expected_rate=doublet.rate,
+#   seed=as.integer(Sys.getenv('CHAIR_SEED','1234')), cutoff=0.5)
+# joint_metadata <- data.frame(
+#   RNA_ATAC_joint_score=optional_joint_results$joint_score,
+#   RNA_ATAC_joint_class=optional_joint_results$joint_class,
+#   row.names=optional_joint_results$barcode)
+# dataflt <- SeuratObject::AddMetaData(dataflt,metadata=joint_metadata)
+# chair_write_joint_calls(optional_joint_results,file.path('data',sampleid))
+
+
 saveRDS(dataflt, file = paste0("data/", sampleid, ".QC.rds"))
 metadata <- as.data.frame(dataflt@meta.data) %>% dplyr::mutate(cell = rownames(.))
 metadata <- metadata[, c("cell", setdiff(colnames(metadata), "cell")), drop = FALSE]
@@ -216,6 +341,9 @@ print(p1 + p2)
 dev.off()
 
 dataflt <- subset(dataflt, subset = RNADF.class == "Singlet")
+# # RNA+ATAC: enable the optional block above, comment the RNA-only line above, and uncomment the next line. Keep exactly one subset active. To disable joint filtering, reverse both changes.
+# dataflt <- subset(dataflt, subset = RNA_ATAC_joint_class == "Singlet")
+
 cat(sprintf("There are %d singlet cell.\n", ncol(dataflt)))
 
 ##### Cluster using singlet cells #####
