@@ -1162,7 +1162,14 @@ function reanalyzeATAC {
 set -eo pipefail
 cd "$wdir"
 awk '\$7+0 > $peak_signal_min' "$cpudir/${RUN}_peaks.narrowPeak" | grep -v -i chrM | cut -f 1-3 > "$cpudir/${RUN}.peak"
-$atac10x --id 10xATAC --peaks "$cpudir/${RUN}.peak" --fragments "$cpudir/${RUN}.fragments.tsv.gz" --reference "$ATACref" --localcores ${NTHREAD10x} --localmem ${GB}
+# Cell Ranger ATAC 2.1.0 checks the canonical fragments filename.
+if [ -L "$wdir/fragments.tsv.gz" ] || [ ! "$cpudir/${RUN}.fragments.tsv.gz" -ef "$wdir/fragments.tsv.gz" ]; then
+    ln -f "$cpudir/${RUN}.fragments.tsv.gz" "$wdir/fragments.tsv.gz"
+fi
+if [ -L "$wdir/fragments.tsv.gz.tbi" ] || [ ! "$cpudir/${RUN}.fragments.tsv.gz.tbi" -ef "$wdir/fragments.tsv.gz.tbi" ]; then
+    ln -f "$cpudir/${RUN}.fragments.tsv.gz.tbi" "$wdir/fragments.tsv.gz.tbi"
+fi
+$atac10x --id 10xATAC --peaks "$cpudir/${RUN}.peak" --fragments "$wdir/fragments.tsv.gz" --reference "$ATACref" --localcores ${NTHREAD10x} --localmem ${GB}
 ENDHERE
     jidatac=$(submitjob "$pbs" "$@")
     export jidatac
